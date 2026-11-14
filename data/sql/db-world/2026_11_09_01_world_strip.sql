@@ -161,6 +161,9 @@ UPDATE `item_template` SET `RequiredLevel` = 0;
 UPDATE `item_template` SET `armor` = 11, `Quality` = 1, `description` = 'Padded robe: Armour Class 11 + Dexterity modifier.',
   `stat_type1` = 0, `stat_value1` = 0, `MaxDurability` = 0 WHERE `entry` = 56;
 UPDATE `item_template` SET `armor` = 0, `MaxDurability` = 0, `description` = '' WHERE `entry` IN (55, 1395, 6096);
+-- every other piece of the stock starting outfits (CharStartOutfit.dbc) that still had armour: robes 3, trousers and boots
+-- 2 - which ArmorClass would read as a +3 / +2 magic bonus. (56 the Padded Robe and 2362 the Shield are real armour.)
+UPDATE `item_template` SET `armor` = 0, `MaxDurability` = 0 WHERE `entry` IN (35, 36, 38, 39, 40, 43, 44, 45, 47, 48, 49, 51, 52, 53, 55, 57, 59, 120, 121, 127, 129, 139, 140, 147, 148, 153, 154, 159, 1395, 1396, 2092, 2101, 2102, 2105, 2361, 2504, 2508, 2512, 2516, 3661, 4540, 6096, 6097, 6098, 6116, 6117, 6118, 6119, 6120, 6121, 6122, 6123, 6124, 6125, 6126, 6127, 6129, 6134, 6135, 6136, 6137, 6138, 6139, 6140, 6144, 6948, 12282, 20891, 20892, 20893, 20894, 20895, 20896, 20897, 20898, 20899, 20900, 20901, 20978, 20980, 20982, 23322, 23344, 23345, 23346, 23347, 23348, 23473, 23474, 23475, 23476, 23477, 23478, 23479, 24143, 24145, 24146, 25861, 28979, 34648, 34649, 34650, 34651, 34652, 34653, 34655, 34656, 34657, 34658, 34659, 38145, 38147, 40582, 41751, 49778, 50055, 50057);
 UPDATE `item_template` SET `name` = 'Quarterstaff', `dmg_min1` = 1, `dmg_max1` = 6, `delay` = 2000, `MaxDurability` = 0,
   `description` = 'Simple melee weapon. 1d6 Bludgeoning.' WHERE `entry` = 35;
 -- fighter: the class weapon in hand (dwarf greataxe, gnome greatsword), scale mail on, a longsword and shield in the pack

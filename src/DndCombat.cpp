@@ -830,19 +830,18 @@ namespace Dnd
                 names += (i == 0 ? "" : (i + 1 == players.size() ? " and " : ", ")) + std::string(players[i]->GetName());
             Announce(players.front(), Acore::StringFormat("{} defeated {} in {}.", names, e.name, ZoneName(players.front())));
         }
-        // bespoke encounters pay their own XP to every player, once per character; ad-hoc fights split creature XP
+        // bespoke encounters pay their own XP to everyone online, once per character; ad-hoc fights split creature XP
+        // among the players in them
         EncounterDef const* def = GetEncounterDef(e.defId);
         uint32 share = players.empty() ? 0 : xp / players.size();
-        for (Player* p : players)
-        {
-            if (def)
-                OnEncounterWon(p, *def);
-            else if (share)
+        if (def)
+            ShareEncounterWon(players, *def);
+        else if (share)
+            for (Player* p : players)
             {
                 Log(p, Acore::StringFormat("|cff40ff40+{} XP|r", share));
                 p->GiveXP(share, nullptr);
             }
-        }
         Cleanup(e);
     }
 
@@ -880,7 +879,7 @@ namespace Dnd
         }
         Log(p, Acore::StringFormat("|cff40ff40=== Victory: {} - not one of them saw you ===|r", def->name));
         Send(p, "V^VICTORY");
-        OnEncounterWon(p, *def);
+        ShareEncounterWon({ p }, *def);
     }
 
     static void DownedLook(Player* p, bool down);
@@ -2016,7 +2015,19 @@ namespace Dnd
         uint32 now = Now();
         if (!IsTurnOf(p))
         {
-            c->lastPos = pos;
+            // held between turns (and while down) by a root the client is asked to keep. One that walks anyway - a root
+            // it missed - is put back where it stood and held again; a shove (ignoreMoveUntil, lastPos at the landing
+            // spot) is the only off-turn move
+            if (now < c->ignoreMoveUntil || !p->IsAlive())
+                return;
+            if (c->lastPos.GetExactDist2d(&pos) > 1.f)
+            {
+                SetRooted(p, false);
+                SetRooted(p, true);              // (sent again: the client's root had come off)
+                p->NearTeleportTo(c->lastPos.GetPositionX(), c->lastPos.GetPositionY(), c->lastPos.GetPositionZ(),
+                    p->GetOrientation());
+                Error(p, IsDowned(p) ? "You're down - you can't move." : "It isn't your turn.");
+            }
             return;
         }
         // mid-jump: the flight is free, but lastPos stays on the landing spot, so anything run after it counts

@@ -7,6 +7,7 @@
  * stood on allowed ground.
  */
 #include "Dnd.h"
+#include <algorithm>
 #include <deque>
 
 #include "DatabaseEnv.h"
@@ -196,6 +197,29 @@ namespace Dnd
                 Log(p, "|cffffd100" + z->clearText + "|r");
         }
         PushProgress(p);
+    }
+
+    void ShareEncounterWon(std::vector<Player*> const& winners, EncounterDef const& def, bool peaceful, bool halfXp)
+    {
+        for (Player* p : winners)
+            OnEncounterWon(p, def, peaceful, halfXp);
+        if (winners.empty())
+            return;
+        // the self-test's bots and the real players never share: a test's wins would level whoever is playing
+        bool bots = Test::IsBot(winners.front()->GetGUID());
+        std::string names;
+        for (std::size_t i = 0; i < winners.size(); ++i)
+            names += (i == 0 ? "" : (i + 1 == winners.size() ? " and " : ", ")) + std::string(winners[i]->GetName());
+        std::vector<Player*> others;         // gathered first: paying can level someone up mid-loop
+        for (auto const& [guid, o] : ObjectAccessor::GetPlayers())
+            if (o && o->IsInWorld() && Test::IsBot(guid) == bots && !HasCleared(o, def.id) &&
+                std::find(winners.begin(), winners.end(), o) == winners.end())
+                others.push_back(o);
+        for (Player* o : others)
+        {
+            Log(o, Acore::StringFormat("|cff40ff40{} won {} - it counts for you too.|r", names, def.name));
+            OnEncounterWon(o, def, peaceful, halfXp);
+        }
     }
 
     // "Q^zone^done^total^name|cleared^..." for the zone the player stands in; "Q" alone hides the tracker

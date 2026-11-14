@@ -178,7 +178,10 @@ namespace Dnd
         SPELL_CREATURE_SPARK    = 200902,   //   lightning
         SPELL_CREATURE_FROST    = 200903,   //   cold
         SPELL_CREATURE_FIRE     = 200904,   //   fire
-        SPELL_CREATURE_SHOOT    = 200905,   //   a gun / bow in the ranged slot
+        SPELL_CREATURE_SHOOT    = 200905,   //   a bow / crossbow in the ranged slot (an arrow)
+        SPELL_CREATURE_SPEAR    = 200906,   //   a piercing throw (a spear)
+        SPELL_CREATURE_AXE      = 200907,   //   a slashing throw (a hand axe)
+        SPELL_CREATURE_GUN      = 200908,   //   a gun in the ranged slot (a bullet)
         SPELL_FALLEN            = 200950,   // dead in a fight with others about: no releasing, wait for Brother Marrow
 
         SPELL_HEARTHSTONE       = 8690,
@@ -356,6 +359,9 @@ namespace Dnd
     void ResetProgress(Player* p);
     bool HasCleared(Player* p, uint32 encounterId);
     void OnEncounterWon(Player* p, EncounterDef const& def, bool peaceful = false, bool halfXp = false);
+    // a win counts for everyone online: the winners, then every other player (a bot's win: only the other bots)
+    void ShareEncounterWon(std::vector<Player*> const& winners, EncounterDef const& def, bool peaceful = false,
+                           bool halfXp = false);
     void PushProgress(Player* p);
     void UpdateGate(Player* p, uint32 diff);
 
@@ -366,6 +372,7 @@ namespace Dnd
     ObjectGuid WatchedTalker(Player* p);     // whose conversation this player is watching (Empty: nobody's)
     void PullGroupIntoFight(Creature* c, Player* p);     // a group caught by your spell mid-fight joins it (DndCombat.cpp)
     void DialogueChoose(Player* p, uint32 idx);
+    void DialogueHover(Player* p, uint32 idx);   // the talker's mouse over an option: onlookers see it (DH^idx)
     void CloseDialogue(Player* p, bool leave, uint32 cooldownMs = 45000);
     int SkillBonusByName(Player* p, std::string const& skill);
     bool MeetsRequirement(Player* p, std::string const& req);

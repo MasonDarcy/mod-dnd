@@ -793,10 +793,8 @@ namespace Dnd
                 party.push_back(other);
         });
         for (Player* pl : party)
-        {
-            Send(pl, "V^RESOLVED");
-            OnEncounterWon(pl, def, true, halfXp);
-        }
+            Send(pl, "V^RESOLVED");          // the banner for those there; the win counts for everyone online
+        ShareEncounterWon(party, def, true, halfXp);
     }
 
     // ------------------------------------------------------------------ API
@@ -863,6 +861,29 @@ namespace Dnd
         return true;
     }
 
+    static void TownResult(Player* p, Creature* speaker, Talk const& t, bool won);
+
+    // a villager's talk shut on its last line (Escape, walking off, logging out) - every way on from it the same win or
+    // the same loss - ends as that line does: a failed check can't be shrugged off and tried again
+    static void SettleTownTalk(Player* p, Talk const& t)
+    {
+        auto node = sNodes.find(t.node);
+        if (!t.townSpawn || node == sNodes.end())
+            return;
+        int32 ending = 0;
+        for (DialogueOption const& o : node->second.options)
+        {
+            if (!Visible(p, t, o))
+                continue;
+            if (!o.skill.empty() || (o.nextOk != NEXT_PEACE && o.nextOk != NEXT_SOUR) || (ending && o.nextOk != ending))
+                return;                      // a choice still open: nothing settled
+            ending = o.nextOk;
+        }
+        Creature* speaker = SpeakerOf(p, t);
+        if (ending && (speaker || ending == NEXT_SOUR))
+            TownResult(p, speaker, t, ending == NEXT_PEACE);
+    }
+
     void CloseDialogue(Player* p, bool leave, uint32 cooldownMs)
     {
         auto itr = sTalks.find(p->GetGUID());
@@ -871,6 +892,7 @@ namespace Dnd
             Unwatch(p, leave);               // an onlooker closed the panel (Escape): it stays shut until this talk ends
             return;
         }
+        SettleTownTalk(p, itr->second);      // (however it closes: Escape, walking off, logging out; TownResult pays once)
         for (Player* w : Watchers(p))
             Unwatch(w, false);
         for (auto d = sWatchDeclined.begin(); d != sWatchDeclined.end();)
@@ -890,7 +912,14 @@ namespace Dnd
         Send(p, "DX");
     }
 
-    static void TownResult(Player* p, Creature* speaker, Talk const& t, bool won);
+    // the talker's mouse is over option idx (0: over none): onlookers see which
+    void DialogueHover(Player* p, uint32 idx)
+    {
+        if (!InDialogue(p))
+            return;
+        for (Player* w : Watchers(p))
+            Send(w, Acore::StringFormat("DH^{}", idx));
+    }
 
     void DialogueChoose(Player* p, uint32 idx)
     {
@@ -932,6 +961,9 @@ namespace Dnd
                 opt = &o;
         if (!opt)
             return;
+        // onlookers see the choice lit up (their panel holds it a moment before the answer plays)
+        for (Player* w : Watchers(p))
+            Send(w, Acore::StringFormat("DH^{}^1", idx));
         if (opt->once)
             itr->second.clues.insert(OnceKey(*opt));
 
@@ -1233,6 +1265,8 @@ namespace Dnd
             return;
         TownRole const& r = sRoles[t.townRole];
         uint8 result = won ? 1 : 2;
+        if (sTownDone[p->GetGUID()].count(t.townSpawn))
+            return;                          // settled already (closed on its last line): never paid twice
         sTownDone[p->GetGUID()][t.townSpawn] = result;
         CharacterDatabase.Execute("REPLACE INTO dnd_character_townsfolk (guid, spawn, result) VALUES ({}, {}, {})",
             p->GetGUID().GetCounter(), t.townSpawn, result);

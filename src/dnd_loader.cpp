@@ -62,6 +62,8 @@ namespace Dnd
             TavernMessage(p, msg.substr(4));
         else if (msg.rfind("say^", 0) == 0)
             DialogueChoose(p, uint32(std::atoi(msg.c_str() + 4)));
+        else if (msg.rfind("hover^", 0) == 0)
+            DialogueHover(p, uint32(std::atoi(msg.c_str() + 6)));
         else if (msg == "bye")
             CloseDialogue(p, true, 8000);      // Escape / the panel closed: walk back up (or right-click) to resume
         else if (msg == "endturn")

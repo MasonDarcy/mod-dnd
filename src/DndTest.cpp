@@ -3990,6 +3990,32 @@ namespace
             Act(s, [ranged](Ctx& c) { Remember(c); sMsgs.clear(); CreatureAttack(Mob(c), Bot(c), ranged, false); });
         };
 
+        add("rules.a_creature_throws_what_its_attack_does", [=](Script& s)
+        {
+            // nothing in the ranged slot: piercing flies as a spear, slashing as a hand axe, bludgeoning as a rock, cold
+            // as a frost bolt - each a spell whose visual carries its own missile (stock throws draw the caster's thrown
+            // weapon, and creatures have none: nothing flew). (The test creatures share one stat block: one creature,
+            // its attack swapped between checks.)
+            AddBot(s, wiz1);
+            AddMob(s, hitter("1d6", DMG_PIERCING, true));
+            Act(s, [hitter](Ctx& c)
+            {
+                std::pair<DmgType, std::pair<uint32, char const*>> const want[] = {
+                    { DMG_PIERCING, { SPELL_CREATURE_SPEAR, "piercing: a spear" } },
+                    { DMG_SLASHING, { SPELL_CREATURE_AXE, "slashing: a hand axe" } },
+                    { DMG_BLUDGEONING, { SPELL_CREATURE_THROW, "bludgeoning: a rock" } },
+                    { DMG_COLD, { SPELL_CREATURE_FROST, "cold: a frost bolt" } } };
+                for (auto const& [type, w] : want)
+                {
+                    SetTestStats(hitter("1d6", type, true).st);
+                    uint32 id = CreatureMissile(Mob(c));
+                    CheckEq(c, double(id), double(w.first), w.second);
+                    SpellInfo const* si = sSpellMgr->GetSpellInfo(id);
+                    Check(c, si && si->SpellVisual[0] != 0, std::string(w.second) + " - the spell exists, with a visual");
+                    Check(c, IsCreatureMissile(id), std::string(w.second) + " - lands as a creature's attack");
+                }
+            });
+        });
         add("classes.create_pairs_exist", [=](Script& s)
         {
             AddBot(s, wiz1);
@@ -4002,6 +4028,52 @@ namespace
                          { RACE_GNOME, CLASS_PALADIN }, { RACE_GNOME, CLASS_HUNTER } })
                     Check(c, sObjectMgr->GetPlayerInfo(race, cls) != nullptr,
                         Acore::StringFormat("no playercreateinfo for race {} class {}", race, cls));
+            });
+        });
+        add("town.a_lost_talk_stays_lost_when_closed", [=](Script& s)
+        {
+            // Grundel Harkin, Anvilmar's smith: a check failed, the panel shut on the losing line (Escape) instead of
+            // "Fair enough." - it's still lost: walking back up gets the parting words, not the talk again
+            BotOpt o{ WIZ, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -6102.5f;
+            o.y = 384.f;
+            o.z = 395.6f;
+            AddBot(s, o);
+            s.Wait(1500);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::list<Creature*> found;
+                p->GetCreatureListWithEntryInGrid(found, 1104, 30.f);
+                Check(c, !found.empty(), "the smith is at his forge");
+                if (found.empty())
+                    return;
+                Creature* k = found.front();
+                ClearMsgs();
+                Check(c, StartTownTalk(p, k), "the talk opens");
+                int idx = -1;
+                for (std::string const& m : MsgsBy(p, "DO^"))
+                {
+                    std::vector<std::string> f = Split(m, '^');
+                    if (idx < 0 && f.size() > 3 && !f[3].empty())
+                        idx = std::atoi(f[1].c_str());
+                }
+                Check(c, idx >= 0, "an option with a check");
+                if (idx < 0)
+                    return;
+                ClearMsgs();
+                sDice.assign({ 1, 1 });
+                HandleClientMessage(p, Acore::StringFormat("say^{}", idx));
+                sDice.clear();
+                Check(c, InDialogue(p) && !MsgsBy(p, "DR^").empty(), "the check fails, on to the losing line");
+                HandleClientMessage(p, "bye");                     // Escape
+                Check(c, !InDialogue(p), "the panel shut");
+                ClearMsgs();
+                StartTownTalk(p, k);
+                Check(c, !InDialogue(p) && !GotExact(p, "DC"), "walking back up: no second try");
+                CloseDialogue(p, false);
             });
         });
         add("town.a_gryphon_master_flies_you", [=](Script& s)
@@ -6912,6 +6984,39 @@ namespace
                 }
             });
         });
+        add("multi.an_encounter_won_counts_for_everyone_online", [=](Script& s)
+        {
+            // a win anywhere pays every player online the encounter's whole XP (not split) and clears it for them -
+            // even one 200 m off who never saw it; a second win of it pays nobody again
+            AddBot(s, { FIGHTER, 1 });
+            Act(s, [](Ctx& c)
+            {
+                Player* a = Bot(c);
+                Player* b = AddBotAt(c, WIZ, 1, a->GetPositionX() - 200.f, a->GetPositionY());
+                EncounterDef const* def = nullptr;
+                for (EncounterDef const* d : AllEncounters())
+                    if (d->xp > 0 && d->xp < sObjectMgr->GetXPForLevel(1))
+                    {
+                        def = d;
+                        break;
+                    }
+                Check(c, def != nullptr, "an encounter worth less than a level");
+                if (!def)
+                    return;
+                ClearMsgs();
+                ShareEncounterWon({ a }, *def);
+                for (Player* p : { a, b })
+                {
+                    Check(c, HasCleared(p, def->id), std::string(p->GetName()) + ": cleared");
+                    CheckEq(c, double(TotalXp(p)), double(def->xp), std::string(p->GetName()) + ": the whole XP");
+                }
+                Check(c, SawBy(b, "Jigfighter won " + def->name + " - it counts for you too."), "the far player is told who won");
+                Check(c, !SawBy(a, "counts for you too"), "the winner isn't told it counts for them too");
+                ShareEncounterWon({ b }, *def);
+                for (Player* p : { a, b })
+                    CheckEq(c, double(TotalXp(p)), double(def->xp), std::string(p->GetName()) + ": nothing for a second win");
+            });
+        });
         add("multi.the_fight_goes_on_when_one_player_leaves", [=](Script& s)
         {
             // the fighter logs out on their own turn: the fight carries on for the wizard, whose turn comes up
@@ -7533,6 +7638,27 @@ namespace
             Act(s, [](Ctx& c) { CastAs(c, 0, SPELL_ATTACK, Mob(c)); });
             Expect(s, "refused", [](Ctx& c) { return int(c.v["cast"]) != SPELL_CAST_OK && SawBy(Bot(c), "You're down"); });
         });
+        add("down.a_client_that_walks_while_held_is_put_back", [=](Script& s)
+        {
+            // down (or waiting for a turn), the root holds you; a client whose root came off and walks anyway is sent
+            // back and rooted again. A hand's breadth of drift is let be
+            downSetup(s);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                Check(c, IsDowned(p) && !IsTurnOf(p), "down, and not their turn");
+                Position at = p->GetPosition();
+                ClearMsgs();
+                Position drift(at.GetPositionX() + 0.5f, at.GetPositionY(), at.GetPositionZ());
+                OnPlayerMoved(p, drift);
+                Check(c, !SawBy(p, "X^"), "half a metre of drift: let be");
+                p->SetControlled(false, UNIT_STATE_ROOT);         // the root came off
+                Position walked(at.GetPositionX() + 3.f, at.GetPositionY(), at.GetPositionZ());
+                OnPlayerMoved(p, walked);
+                Check(c, SawBy(p, "X^You're down - you can't move."), "3 m: told they can't");
+                Check(c, p->HasUnitState(UNIT_STATE_ROOT), "and rooted again");
+            });
+        });
         // fleeing: on your turn, nobody within 20 m
         add("flee.too_close_is_refused", [=](Script& s)
         {
@@ -7944,6 +8070,45 @@ namespace
                 HandleClientMessage(b, Acore::StringFormat("say^{}", idx));
                 Check(c, MsgsBy(a, "DS^").empty() && MsgsBy(b, "DS^").empty(), "the onlooker's pick does nothing");
                 Check(c, InDialogue(a) && WatchedTalker(b) == a->GetGUID(), "the talk goes on as it was");
+            });
+        });
+        add("multi.onlookers_see_the_hover_and_the_pick", [=](Script& s)
+        {
+            // the talker's mouse over an option lights it on the onlooker's panel (DH^idx; 0 when it leaves), and a pick
+            // reaches them as DH^idx^1 ahead of everything it leads to; an onlooker's own mouse tells nobody anything
+            talkWithOnlooker(s, 3.f);
+            Act(s, [firstOption](Ctx& c)
+            {
+                if (Skipped(c))
+                    return;
+                Player* a = Bot(c);
+                Player* b = Bot(c, 1);
+                int idx = firstOption(a, 3, false);
+                if (idx < 0)
+                    idx = firstOption(a, 3, true);
+                Check(c, idx >= 0, "the talker has an option");
+                if (idx < 0)
+                    return;
+                ClearMsgs();
+                HandleClientMessage(a, Acore::StringFormat("hover^{}", idx));
+                Check(c, GotExact(b, Acore::StringFormat("DH^{}", idx)), "the onlooker sees the hover");
+                Check(c, MsgsBy(a, "DH^").empty(), "the talker isn't sent their own hover");
+                HandleClientMessage(a, "hover^0");
+                Check(c, GotExact(b, "DH^0"), "and sees it leave");
+                ClearMsgs();
+                HandleClientMessage(b, Acore::StringFormat("hover^{}", idx));
+                Check(c, MsgsBy(a, "DH^").empty() && MsgsBy(b, "DH^").empty(), "the onlooker's hover goes nowhere");
+                ClearMsgs();
+                HandleClientMessage(a, Acore::StringFormat("say^{}", idx));
+                std::vector<std::string> const& got = sMsgsOf[b->GetGUID()];
+                std::string pick = Acore::StringFormat("DH^{}^1", idx);
+                auto at = std::find(got.begin(), got.end(), pick);
+                Check(c, at != got.end(), "the onlooker sees the pick");
+                bool first = true;
+                for (auto m = got.begin(); m != at && m != got.end(); ++m)
+                    if (m->rfind("DS^", 0) == 0 || m->rfind("DR^", 0) == 0 || *m == "DX")
+                        first = false;
+                Check(c, first, "before the answer, the roll or the end it leads to");
             });
         });
         add("multi.onlookers_see_the_roll", [=](Script& s)

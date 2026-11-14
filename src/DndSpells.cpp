@@ -674,10 +674,16 @@ namespace Dnd
         if (!hit)
         {
             Narrate(attacker, target, head + (r.natural == 1 ? "  |cffff4040CRITICAL MISS|r" : "  |cffaaaaaaMISS|r"));
+            // a creature that isn't hit visibly gets out of the way (as a player does from a creature's miss): the
+            // dodge animation, and "Dodge" over its head for a blow (a spell that misses still reads "Miss")
+            bool dodge = target->ToCreature() && target->IsAlive();
             if (showMelee || !spell)
-                attacker->SendAttackStateUpdate(HITINFO_MISS, target, 1, SPELL_SCHOOL_MASK_NORMAL, 0, 0, 0, VICTIMSTATE_INTACT, 0);
+                attacker->SendAttackStateUpdate(HITINFO_MISS, target, 1, SPELL_SCHOOL_MASK_NORMAL, 0, 0, 0,
+                    dodge ? VICTIMSTATE_DODGE : VICTIMSTATE_INTACT, 0);
             else
                 attacker->SendSpellMiss(target, spell->Id, SPELL_MISS_MISS);
+            if (dodge)
+                target->HandleEmoteCommand(EMOTE_ONESHOT_DODGE);
             Player* caster = attacker->ToPlayer();
             ActionInfo const* a = spell ? GetAction(spell->Id) : nullptr;
             if (caster && a && a->slotLevel == 0 && IsSubclass(caster, "Evocation") && Level(caster) >= 6)
@@ -865,6 +871,18 @@ namespace Dnd
     }
 
     // a shove's worth of push straight away from 'from' (Pushing Attack, Shove, Repelling Blast)
+    // a shove's flight to (x, y, z); a player in a fight may be moved off their turn this way (OnPlayerMoved lets it)
+    static void ShoveTo(Unit* target, float x, float y, float z)
+    {
+        if (Combatant* tc = CombatantOf(target->GetGUID()); tc && target->IsPlayer())
+        {
+            tc->ignoreMoveUntil = GameTime::GetGameTimeMS().count() + 1500;
+            tc->lastPos.Relocate(x, y, z);
+        }
+        target->GetMotionMaster()->Clear();
+        target->GetMotionMaster()->MoveJump(x, y, z, 12.f, 4.f);
+    }
+
     static void PushAway(Unit* from, Unit* target, float dist)
     {
         float ang = from->GetAngle(target);
@@ -872,8 +890,7 @@ namespace Dnd
         float y = target->GetPositionY() + std::sin(ang) * dist;
         float z = target->GetPositionZ();
         target->UpdateGroundPositionZ(x, y, z);
-        target->GetMotionMaster()->Clear();
-        target->GetMotionMaster()->MoveJump(x, y, z, 12.f, 4.f);
+        ShoveTo(target, x, y, z);
     }
 
     // the creatures in the fight within r m of u (Arms of Hadar, Fey Presence)
@@ -1450,12 +1467,22 @@ namespace Dnd
             case DMG_FIRE:                        return SPELL_CREATURE_FIRE;
             default: break;
         }
-        if (c->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2))
-            return SPELL_CREATURE_SHOOT;
-        return SPELL_CREATURE_THROW;
+        if (uint32 ranged = c->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2))
+        {
+            ItemTemplate const* t = sObjectMgr->GetItemTemplate(ranged);
+            return t && t->Class == ITEM_CLASS_WEAPON && t->SubClass == ITEM_SUBCLASS_WEAPON_GUN ? SPELL_CREATURE_GUN
+                                                                                                   : SPELL_CREATURE_SHOOT;
+        }
+        // nothing in the ranged slot: what flies is what the attack does - a spear, a hand axe, or a rock
+        switch (StatsOrDefault(c).ranged.type)
+        {
+            case DMG_PIERCING: return SPELL_CREATURE_SPEAR;
+            case DMG_SLASHING: return SPELL_CREATURE_AXE;
+            default:           return SPELL_CREATURE_THROW;
+        }
     }
 
-    bool IsCreatureMissile(uint32 id) { return id >= SPELL_CREATURE_THROW && id <= SPELL_CREATURE_SHOOT; }
+    bool IsCreatureMissile(uint32 id) { return id >= SPELL_CREATURE_THROW && id <= SPELL_CREATURE_GUN; }
 
     // ------------------------------------------------------------------ concentration
     bool IsConcentrationSpell(uint32 id)
@@ -1845,8 +1872,7 @@ namespace Dnd
                         float y = target->GetPositionY() + std::sin(ang) * 4.5f;
                         float z = target->GetPositionZ();
                         target->UpdateGroundPositionZ(x, y, z);
-                        target->GetMotionMaster()->Clear();
-                        target->GetMotionMaster()->MoveJump(x, y, z, 12.f, 4.f);
+                        ShoveTo(target, x, y, z);
                         Narrate(p, target, Acore::StringFormat("   {} is driven back 4.5 m.", Who(target)));
                     }
                 }
@@ -1998,8 +2024,7 @@ namespace Dnd
                     float y = target->GetPositionY() + std::sin(ang) * 4.5f;
                     float z = target->GetPositionZ();
                     target->UpdateGroundPositionZ(x, y, z);
-                    target->GetMotionMaster()->Clear();
-                    target->GetMotionMaster()->MoveJump(x, y, z, 12.f, 4.f);
+                    ShoveTo(target, x, y, z);
                 }
                 break;
             }
