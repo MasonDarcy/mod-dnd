@@ -393,6 +393,8 @@ namespace Dnd
     // tavern games (DndTavern.cpp): dice, cards and drinking contests with villagers, for a wager
     void OpenTavern(Player* p, Creature* npc, std::string const& games);
     void MakeHome(Player* p, Creature* npc);    // an innkeeper's bind: the hearthstone comes back to this inn
+    void UpdateTavern(Player* p, uint32 diff);  // a player at a table: offer "Watch the game" to whoever is near
+    void TavernWatch(Player* w, std::string const& player);   // "Watch the game" pressed: the table, read-only
     void TavernMessage(Player* p, std::string const& msg);
     void ForgetTavern(ObjectGuid guid);
     void ResetTavern(Player* p);

@@ -42,6 +42,9 @@ namespace Dnd
             uint32 spawn = 0;
             std::string name, games, game;
             bool inn = false;                            // the host is an innkeeper: the table offers to make it home
+            std::set<ObjectGuid> watchers;               // players watching this table (read-only: "Watch the game")
+            std::set<ObjectGuid> offered;                // nearby players offered the watch (DLG / DLGX)
+            uint32 scanTimer = 0;
             uint32 bet = 0;
             std::string phase;                           // "" no game yet, "yours" your move, "done"
             bool cheated = false;
@@ -134,24 +137,33 @@ namespace Dnd
         }
 
         // ---------------------------------------------------------------- messages
+        // to the player at the table and whoever is watching them play
+        void ToTable(Player* p, Table const& t, std::string const& msg)
+        {
+            Send(p, msg);
+            for (ObjectGuid g : t.watchers)
+                if (Player* w = ObjectAccessor::FindPlayer(g))
+                    Send(w, msg);
+        }
+
         void Push(Player* p, Table& t)
         {
             if (t.game == "dice")
-                Send(p, Acore::StringFormat("GS^dice^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, Csv(t.npcDice), Csv(t.myDice),
+                ToTable(p, t, Acore::StringFormat("GS^dice^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, Csv(t.npcDice), Csv(t.myDice),
                     t.rerolled ? 1 : 0, t.cheated ? 1 : 0, t.note.substr(0, 150), t.result));
             else if (t.game == "cards")
-                Send(p, Acore::StringFormat("GS^cards^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, Csv(t.dealer, t.phase == "yours"),
+                ToTable(p, t, Acore::StringFormat("GS^cards^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, Csv(t.dealer, t.phase == "yours"),
                     Csv(t.mine), Total(t.mine), t.cheated ? 1 : 0, t.note.substr(0, 150), t.result));
             else if (t.game == "drink")
-                Send(p, Acore::StringFormat("GS^drink^{}^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, t.round, t.myDrunk, t.npcDrunk,
+                ToTable(p, t, Acore::StringFormat("GS^drink^{}^{}^{}^{}^{}^{}^{}^{}^{}", t.bet, t.phase, t.round, t.myDrunk, t.npcDrunk,
                     DRINKS[std::min(t.round, 4)], t.cheated ? 1 : 0, t.note.substr(0, 150), t.result));
         }
 
         void Menu(Player* p, Table& t)
         {
             bool banned = sBanned.count({ p->GetGUID(), t.spawn }) != 0;
-            Send(p, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney(),
-                t.inn ? 1 : 0));
+            ToTable(p, t, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t),
+                p->GetMoney(), t.inn ? 1 : 0));
         }
 
         // the wager settles: +1 win, 0 push, -1 loss; mult = what a win pays (1, or 1.5 for a natural 21)
@@ -190,7 +202,7 @@ namespace Dnd
             int bonus = SkillBonusByName(p, "Sleight of Hand");
             D20Result r = RollD20(bonus, 0);
             bool ok = r.natural == 20 || (r.natural != 1 && r.total >= dc);
-            Send(p, Acore::StringFormat("TD^Sleight of Hand^{}^{}^{}^{}", r.natural, bonus, dc, ok ? 1 : 0));
+            ToTable(p, t, Acore::StringFormat("TD^Sleight of Hand^{}^{}^{}^{}", r.natural, bonus, dc, ok ? 1 : 0));
             Log(p, Acore::StringFormat("   Sleight of Hand ({}), DC {}: {} - {}", what, dc, r.text, ok ? "|cff40ff40unseen|r" : "|cffff4040CAUGHT|r"));
             if (ok)
                 return true;
@@ -228,7 +240,7 @@ namespace Dnd
                 bool adv = SaveAdvantage(p, CON, false, true);
                 D20Result r = RollD20(bonus, adv ? 1 : 0);
                 bool ok = r.total >= dc;
-                Send(p, Acore::StringFormat("TD^CON save^{}^{}^{}^{}", r.natural, bonus, dc, ok ? 1 : 0));
+                ToTable(p, t, Acore::StringFormat("TD^CON save^{}^{}^{}^{}", r.natural, bonus, dc, ok ? 1 : 0));
                 Log(p, Acore::StringFormat("   You drain the {}. CON save DC {}: {} - {}", drink, dc, r.text, ok ? "|cff40ff40steady|r" : "|cffff8040it hits you|r"));
                 if (!ok)
                     ++t.myDrunk;
@@ -262,6 +274,8 @@ namespace Dnd
     }
 
     // the table opens (from a villager's talk, or a click on one already talked to)
+    static void StopWatching(Player* w, bool tell);
+
     // an innkeeper makes their inn your home: WoW's own bind (the hearthstone comes back here)
     void MakeHome(Player* p, Creature* npc)
     {
@@ -278,6 +292,7 @@ namespace Dnd
     {
         if (!p || !npc || games.empty())
             return;
+        StopWatching(p, true);                   // (watching someone else's game: your own table takes over)
         Table& t = sTables[p->GetGUID()];
         t = Table();
         t.npc = npc->GetGUID();
@@ -289,8 +304,108 @@ namespace Dnd
         Menu(p, t);
     }
 
+    // ---------------------------------------------------------------- watching a game
+    // the table shuts: its panel, and its watchers' panels; nobody's offered it any more
+    static void CloseTable(Player* p, Table& t)
+    {
+        ToTable(p, t, "GX");
+        t.watchers.clear();
+        for (ObjectGuid g : t.offered)
+            if (Player* o = ObjectAccessor::FindPlayer(g))
+                Send(o, "DLGX^" + std::string(p->GetName()));
+        t.offered.clear();
+    }
+
+    static void StopWatching(Player* w, bool tell)
+    {
+        for (auto& [g, t] : sTables)
+            if (t.watchers.erase(w->GetGUID()) && tell)
+                Send(w, "GX");
+    }
+
+    static bool CanWatch(Player* w, Player* p)
+    {
+        return w != p && w->IsAlive() && !InCombat(w) && !InDialogue(w) && !sTables.count(w->GetGUID()) &&
+            w->GetMap() == p->GetMap() && w->GetExactDist(p) <= 20.f;
+    }
+
+    // a player at a table: offer the watch to whoever is near (DLG^player^host), withdraw it from whoever has wandered
+    // off or got busy (DLGX^player); watchers who've walked away stop watching
+    void UpdateTavern(Player* p, uint32 diff)
+    {
+        auto itr = sTables.find(p->GetGUID());
+        if (itr == sTables.end())
+            return;
+        Table& t = itr->second;
+        t.scanTimer += diff;
+        if (t.scanTimer < 500)
+            return;
+        t.scanTimer = 0;
+        std::string who = p->GetName();
+        for (auto w = t.watchers.begin(); w != t.watchers.end();)
+        {
+            Player* pl = ObjectAccessor::FindPlayer(*w);
+            bool keep = pl && pl->IsAlive() && !InCombat(pl) && pl->GetMap() == p->GetMap() && pl->GetExactDist(p) <= 30.f;
+            if (!keep && pl)
+                Send(pl, "GX");
+            w = keep ? std::next(w) : t.watchers.erase(w);
+        }
+        for (auto o = t.offered.begin(); o != t.offered.end();)
+        {
+            Player* pl = ObjectAccessor::FindPlayer(*o);
+            bool keep = pl && CanWatch(pl, p) && !t.watchers.count(pl->GetGUID());
+            if (!keep && pl)
+                Send(pl, "DLGX^" + who);
+            o = keep ? std::next(o) : t.offered.erase(o);
+        }
+        std::string offer = "DLG^" + who + "^" + t.name;
+        p->GetMap()->DoForAllPlayers([&](Player* pl)
+        {
+            if (!t.offered.count(pl->GetGUID()) && !t.watchers.count(pl->GetGUID()) && CanWatch(pl, p))
+            {
+                t.offered.insert(pl->GetGUID());
+                Send(pl, offer);
+            }
+        });
+    }
+
+    // "Watch the game" pressed: the table as the player sees it, read-only (GV^player, then the usual GO / GS)
+    void TavernWatch(Player* w, std::string const& name)
+    {
+        Player* p = ObjectAccessor::FindPlayerByName(name, false);
+        auto itr = p ? sTables.find(p->GetGUID()) : sTables.end();
+        if (itr == sTables.end() || !CanWatch(w, p))
+        {
+            Send(w, "DLGX^" + name);
+            if (itr != sTables.end())
+                Error(w, "You're too far away, or too busy, to watch.");
+            return;
+        }
+        StopWatching(w, false);
+        Table& t = itr->second;
+        t.offered.erase(w->GetGUID());
+        t.watchers.insert(w->GetGUID());
+        Send(w, "DLGX^" + name);
+        Send(w, "GV^" + name);
+        bool banned = sBanned.count({ p->GetGUID(), t.spawn }) != 0;
+        Send(w, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney(), 0));
+        if (!t.game.empty() && !t.phase.empty())
+        {
+            std::set<ObjectGuid> only = { w->GetGUID() };
+            std::swap(only, t.watchers);         // the hand in progress, to the new watcher alone
+            Push(p, t);
+            std::swap(only, t.watchers);
+        }
+        Log(p, Acore::StringFormat("|cff909090{} is watching you play.|r", w->GetName()));
+    }
+
     void TavernMessage(Player* p, std::string const& msg)
     {
+        if (msg == "unwatch")
+        {
+            StopWatching(p, true);
+            return;
+        }
         auto itr = sTables.find(p->GetGUID());
         if (itr == sTables.end())
             return;
@@ -309,14 +424,14 @@ namespace Dnd
         {
             if (t.phase == "yours")              // walking away mid-hand forfeits it
                 Settle(p, t, -1);
-            Send(p, "GX");
+            CloseTable(p, t);
             sTables.erase(itr);
             return;
         }
         if (!NpcOf(p, t) || InCombat(p))
         {
             Error(p, "You're not at the table any more.");
-            Send(p, "GX");
+            CloseTable(p, t);
             sTables.erase(itr);
             return;
         }
@@ -350,8 +465,11 @@ namespace Dnd
             ObjectGuid npc = t.npc;
             uint32 spawn = t.spawn;
             std::string name = t.name;
-            t = Table();
-            t.npc = npc, t.spawn = spawn, t.name = name, t.games = games;
+            bool inn = t.inn;
+            std::set<ObjectGuid> watchers = t.watchers, offered = t.offered;
+            t = Table();                         // a fresh hand - the same table, its host, and whoever is watching
+            t.npc = npc, t.spawn = spawn, t.name = name, t.games = games, t.inn = inn;
+            t.watchers = watchers, t.offered = offered;
             t.game = game;
             t.bet = bet;
             t.phase = "yours";
@@ -467,7 +585,18 @@ namespace Dnd
         }
     }
 
-    void ForgetTavern(ObjectGuid guid) { sTables.erase(guid); }
+    void ForgetTavern(ObjectGuid guid)
+    {
+        if (auto itr = sTables.find(guid); itr != sTables.end())
+            if (Player* p = ObjectAccessor::FindPlayer(guid))
+                CloseTable(p, itr->second);
+        sTables.erase(guid);
+        for (auto& [g, t] : sTables)
+        {
+            t.watchers.erase(guid);
+            t.offered.erase(guid);
+        }
+    }
     void ResetTavern(Player* p)
     {
         for (auto itr = sSpent.begin(); itr != sSpent.end();)

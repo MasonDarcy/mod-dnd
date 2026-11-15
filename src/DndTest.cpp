@@ -2818,6 +2818,26 @@ namespace
             Expect(s, "no second chance", [lastGame](Ctx&) { return lastGame().empty(); });
             Act(s, [](Ctx&) { RemoveTestTreat(993); });
         });
+        add("treat.players_nearby_hear_of_a_minigame", [=](Script& s)
+        {
+            // the game is the wizard's alone, but the fighter beside them hears who's at it and how it went; a rogue
+            // 60 m off hears nothing
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                AddTestTreat(996, Bot(c), "lock", 12, 5000);
+                AddBotAt(c, FIGHTER, 1, Bot(c)->GetPositionX() + 2.f, Bot(c)->GetPositionY());
+                AddBotAt(c, ROGUE, 1, Bot(c)->GetPositionX() - 60.f, Bot(c)->GetPositionY());
+            });
+            Rig(s, { 15, 15 });
+            Act(s, [](Ctx& c) { ClearMsgs(); UseTestTreat(Bot(c), 996); });
+            Expect(s, "the fighter hears the wizard set to work", [](Ctx& c) { return SawBy(Bot(c, 1), "Jigwiz sets to work on"); });
+            Expect(s, "the rogue far off doesn't", [](Ctx& c) { return !SawBy(Bot(c, 2), "sets to work"); });
+            Expect(s, "nor does the wizard (they're playing it)", [](Ctx& c) { return !SawBy(Bot(c), "sets to work"); });
+            Act(s, answer(1));
+            Expect(s, "and hears it gave up its secret", [](Ctx& c) { return SawBy(Bot(c, 1), "...and Jigwiz has it"); });
+            Act(s, [](Ctx&) { RemoveTestTreat(996); });
+        });
         add("treat.puzzle_out_of_tries_pays_nothing_and_keeps_its_difficulty", [=](Script& s)
         {
             AddBot(s, wiz1);
@@ -4207,6 +4227,54 @@ namespace
                     inn = inn || (m.size() > 2 && m.substr(m.size() - 2) == "^1");
                 Check(c, inn, "his table says it's an inn (the home button)");
                 HandleClientMessage(p, "tav^leave");
+            });
+        });
+        add("multi.watch_a_game_at_the_tavern", [=](Script& s)
+        {
+            // Belm's table: the fighter sits down; the wizard beside them is offered "Watch the game" (DLG) on the next
+            // scan; pressing it shows the table read-only (GV, then GO, then every GS of the hand); the fighter leaving
+            // closes it (GX). A rogue 60 m off is never offered
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -5599.5f;
+            o.y = -531.2f;
+            o.z = 399.7f;
+            AddBot(s, o);
+            s.Wait(1500);
+            Act(s, [](Ctx& c)
+            {
+                Player* a = Bot(c);
+                Player* b = AddBotAt(c, WIZ, 1, a->GetPositionX() + 2.f, a->GetPositionY());
+                Player* away = AddBotAt(c, ROGUE, 1, a->GetPositionX() - 60.f, a->GetPositionY());
+                std::list<Creature*> found;
+                a->GetCreatureListWithEntryInGrid(found, 1247, 30.f);
+                Check(c, !found.empty(), "Belm is at his inn");
+                if (found.empty())
+                    return;
+                a->ModifyMoney(5000);
+                ClearMsgs();
+                OpenTavern(a, found.front(), "dice");
+                UpdateTavern(a, 600);
+                Check(c, GotExact(b, "DLG^Jigfighter^Innkeeper Belm"), "the wizard beside them is offered the watch");
+                Check(c, MsgsBy(away, "DLG^").empty(), "the rogue 60 m off isn't");
+                Check(c, MsgsBy(b, "GO^").empty(), "and nobody sees the table without asking");
+                ClearMsgs();
+                HandleClientMessage(b, "tavwatch^Jigfighter");
+                Check(c, GotExact(b, "GV^Jigfighter") && !MsgsBy(b, "GO^").empty(), "pressing it shows the table, as theirs");
+                Check(c, GotExact(b, "DLGX^Jigfighter"), "and the offer goes");
+                ClearMsgs();
+                HandleClientMessage(a, "tav^play^dice^100");
+                Check(c, !MsgsBy(a, "GS^dice").empty(), "the fighter plays a hand of dice");
+                Check(c, MsgsBy(b, "GS^dice") == MsgsBy(a, "GS^dice"), "and the watcher sees exactly what they see");
+                HandleClientMessage(b, "tav^play^dice^100");
+                Check(c, MsgsBy(b, "GS^").size() == MsgsBy(a, "GS^").size(), "the watcher can't play at their table");
+                // (a fresh hand keeps the table's host: Belm's is still an inn, and still makes it home)
+                HandleClientMessage(a, "tav^home");
+                Check(c, std::fabs(a->m_homebindX - found.front()->GetPositionX()) < 30.f, "after a hand, still an inn to call home");
+                ClearMsgs();
+                HandleClientMessage(a, "tav^leave");
+                Check(c, GotExact(b, "GX"), "the fighter leaving closes the watcher's panel");
             });
         });
         add("multi.listen_in_on_a_villager_chat", [=](Script& s)

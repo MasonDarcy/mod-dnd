@@ -66,6 +66,8 @@ namespace Dnd
             DialogueHover(p, uint32(std::atoi(msg.c_str() + 6)));
         else if (msg.rfind("listen^", 0) == 0)
             ListenIn(p, msg.substr(7));
+        else if (msg.rfind("tavwatch^", 0) == 0)
+            TavernWatch(p, msg.substr(9));
         else if (msg == "bye")
             CloseDialogue(p, true, 8000);      // Escape / the panel closed: walk back up (or right-click) to resume
         else if (msg == "endturn")
@@ -187,6 +189,7 @@ public:
         UpdateFood(p, diff);
         UpdateDialogue(p, diff);
         UpdateTreats(p, diff);
+        UpdateTavern(p, diff);
         UpdateDowned(p);
         UpdateFallen(p, diff);
         // a released spirit has no corpse to run back to: Brother Marrow, at the graveyard, raises the dead

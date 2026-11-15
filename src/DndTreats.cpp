@@ -295,6 +295,8 @@ namespace Dnd
 
     static void TakeForEveryone(Player* p, TreatDef const& t);
 
+    static std::string TellName(TreatDef const& t);
+
     static void Reward(Player* p, TreatDef const& t, std::string const& text, std::string const& kind, std::string const& title)
     {
         if (Taken const* who = GoneFor(p, t.id))
@@ -355,14 +357,7 @@ namespace Dnd
             parts.push_back("Proficiency: " + t.grant);
         }
         {
-            std::string what = "something hidden";
-            if (GameObjectData const* gd = t.tellGuid ? sObjectMgr->GetGameObjectData(t.tellGuid) : nullptr)
-                if (GameObjectTemplate const* gt = sObjectMgr->GetGameObjectTemplate(gd->id); gt && !gt->name.empty())
-                {
-                    what = gt->name;
-                    std::transform(what.begin(), what.end(), what.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
-                    what = "the " + what;        // (the weathered bones, the broken crate, the fallen masonry)
-                }
+            std::string what = TellName(t);
             std::vector<std::string> got;
             if (t.item)
                 if (ItemTemplate const* it = sObjectMgr->GetItemTemplate(t.item))
@@ -417,8 +412,34 @@ namespace Dnd
     }
 
     // open the treat's minigame in the addon (level: 0 easy, 1 hard)
+    // a find by its tell: "the weathered bones", "the broken crate" ("something hidden" without one)
+    static std::string TellName(TreatDef const& t)
+    {
+        if (GameObjectData const* gd = t.tellGuid ? sObjectMgr->GetGameObjectData(t.tellGuid) : nullptr)
+            if (GameObjectTemplate const* gt = sObjectMgr->GetGameObjectTemplate(gd->id); gt && !gt->name.empty())
+            {
+                std::string what = gt->name;
+                std::transform(what.begin(), what.end(), what.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+                return "the " + what;
+            }
+        return "something hidden";
+    }
+
+    // the players near a find's minigame hear about it: who's at it, and how it went (the game itself is the player's,
+    // in their addon - nobody else sees it). Real players only: a bot's game tells nobody, and nobody tells a bot
+    static void TellNearby(Player* p, TreatDef const& t, std::string const& line)
+    {
+        p->GetMap()->DoForAllPlayers([&](Player* o)
+        {
+            if (o != p && o->IsInWorld() && Test::IsBot(o->GetGUID()) == Test::IsBot(p->GetGUID()) &&
+                o->GetDistance(t.x, t.y, t.z) <= 30.f)
+                Log(o, "|cffc8b890" + line + "|r");
+        });
+    }
+
     static void OpenGame(Player* p, TreatDef const& t, uint8 level)
     {
+        TellNearby(p, t, Acore::StringFormat("{} sets to work on {}...", p->GetName(), TellName(t)));
         PendingGame& g = sGame[p->GetGUID()];
         g.id = t.id;
         g.nonce = urand(1, 0x7FFFFFFF);
@@ -471,6 +492,8 @@ namespace Dnd
             p->GetDistance(t.x, t.y, t.z) > 25.f || InCombat(p))
             return;
         sGameLevel[p->GetGUID()].erase(id);
+        TellNearby(p, t, won ? Acore::StringFormat("...and {} has it - {} gives up what it was hiding.", p->GetName(), TellName(t))
+                             : Acore::StringFormat("...but {} gives up on {}.", p->GetName(), TellName(t)));
         if (won)
             Reward(p, t, t.passive ? t.claim : t.success, t.passive ? "found" : "success", t.passive ? "A Discovery" : t.skill);
         else if (t.Puzzle())
