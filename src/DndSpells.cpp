@@ -2144,7 +2144,7 @@ namespace Dnd
                     for (Combatant const& c : e->order)
                         if (!c.gone && c.alive)
                             if (Unit* u = e->GetUnit(c))
-                                if (u->IsAlive() && u->GetExactDist(&centre) <= 1.5f + u->GetCombatReach())
+                                if (u->IsAlive() && u->GetExactDist(&centre) <= 3.f + u->GetCombatReach())   // 3 m (5e: 1.5)
                                     caught.push_back(u);
                 }
                 else if (target->IsAlive())

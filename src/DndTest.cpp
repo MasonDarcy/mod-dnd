@@ -2023,6 +2023,21 @@ namespace
             ExpectDrop(s, 6, 0, "target: 1d10 (2) + failed save 2d6 (4)");
             ExpectDrop(s, 4, 1, "neighbour: failed save 2d6 (4)");
         });
+        // the burst is 3 m (wider than 5e's 1.5): a creature 4 m from the target, its edge inside 3 m, is caught; one
+        // 8 m off isn't
+        add("wizard.ice_knife_burst_is_3m", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 6.f, 0.f });
+            AddMob(s, { 6.f, 4.f });
+            AddMob(s, { 6.f, -8.f });
+            StartFight(s);
+            Rig(s, { 15, 15, 2, 1, 1, 2, 2, 1, 1, 2, 2 });
+            Cast(s, SPELL_ICE_KNIFE);
+            ExpectCastOk(s);
+            ExpectDrop(s, 4, 1, "4 m from the target: caught, failed save 2d6 (4)");
+            ExpectDrop(s, 0, 2, "8 m off: untouched");
+        });
         add("wizard.mage_armor", [=](Script& s)
         {
             AddBot(s, wiz1);
@@ -4030,6 +4045,33 @@ namespace
             Act(s, [ranged](Ctx& c) { Remember(c); sMsgs.clear(); CreatureAttack(Mob(c), Bot(c), ranged, false); });
         };
 
+        add("rules.spells_aimed_at_a_spot_ask_for_one", [=](Script& s)
+        {
+            // every custom spell with an effect aimed at a point (an area at a spot, a cloud, a teleport's landing) carries
+            // the "dest location" target flag - without it the client never shows the ground circle and the spell lands on
+            // the caster (Shatter, Sleep, Cloud of Daggers, Web, Misty Step did)
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                int spots = 0;
+                for (uint32 id = 200000; id < 203000; ++id)
+                {
+                    SpellInfo const* si = sSpellMgr->GetSpellInfo(id);
+                    if (!si)
+                        continue;
+                    bool spot = false;
+                    for (SpellEffectInfo const& eff : si->GetEffects())
+                        for (Targets t : { eff.TargetA.GetTarget(), eff.TargetB.GetTarget() })
+                            spot = spot || t == TARGET_DEST_DEST || t == TARGET_UNIT_DEST_AREA_ENEMY || t == TARGET_DEST_DYNOBJ_ENEMY;
+                    if (!spot)
+                        continue;
+                    ++spots;
+                    Check(c, (si->Targets & TARGET_FLAG_DEST_LOCATION) != 0,
+                        Acore::StringFormat("{} ({}) asks for a spot on the ground", si->SpellName[0], id));
+                }
+                Check(c, spots >= 15, Acore::StringFormat("found the spot spells ({})", spots));
+            });
+        });
         add("rules.guards_leave_encounter_creatures_alone", [=](Script& s)
         {
             // an encounter creature is immune to NPCs: a town guard nearby doesn't wade in with white swings
@@ -4077,6 +4119,54 @@ namespace
                          { RACE_GNOME, CLASS_PALADIN }, { RACE_GNOME, CLASS_HUNTER } })
                     Check(c, sObjectMgr->GetPlayerInfo(race, cls) != nullptr,
                         Acore::StringFormat("no playercreateinfo for race {} class {}", race, cls));
+            });
+        });
+        add("town.neighbours_in_one_trade_say_different_things", [=](Script& s)
+        {
+            // Kharanos: the villagers of one trade (its guards, its folk...) get different whole conversations
+            // (townsfolk_more.py) - not just a different opening line over the same checks
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -5599.5f;
+            o.y = -500.f;
+            o.z = 397.f;
+            AddBot(s, o);
+            s.Wait(2000);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::vector<Creature*> around;
+                for (auto const& [spawn, k] : p->GetMap()->GetCreatureBySpawnIdStore())
+                    if (k->IsInWorld() && k->GetExactDist2d(p) <= 120.f)
+                        around.push_back(k);
+                std::map<std::string, std::set<std::string>> byRole;     // role -> the first option each villager offers
+                std::map<std::string, int> count;
+                for (Creature* k : around)
+                {
+                    if (!IsTownsfolk(k))
+                        continue;
+                    ClearMsgs();
+                    if (!StartTownTalk(p, k) || !InDialogue(p))
+                        continue;
+                    std::vector<std::string> opts = MsgsBy(p, "DO^");
+                    std::string role = TownRoleName(k);
+                    if (!opts.empty())
+                    {
+                        byRole[role].insert(opts.front());
+                        ++count[role];
+                    }
+                    CloseDialogue(p, false);
+                }
+                int checked = 0;
+                for (auto const& [role, firsts] : byRole)
+                    if (count[role] >= 3)
+                    {
+                        ++checked;
+                        Check(c, firsts.size() >= 2, Acore::StringFormat("Kharanos {} villagers ({}): more than one "
+                            "conversation among them ({})", role, count[role], firsts.size()));
+                    }
+                Check(c, checked >= 1, "a trade with three or more villagers in Kharanos");
             });
         });
         add("town.an_innkeeper_makes_their_inn_your_home", [=](Script& s)

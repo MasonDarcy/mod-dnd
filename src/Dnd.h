@@ -407,6 +407,7 @@ namespace Dnd
     // small once-per-character reward for winning it
     void LoadTownsfolk();
     bool IsTownsfolk(Creature* c);
+    std::string TownRoleName(Creature* c);           // the villager's role ("guard", "folk"...), "" if none
     bool StartTownTalk(Player* p, Creature* c);
     void LoadTownProgress(Player* p);
     void ResetTownsfolk(Player* p);

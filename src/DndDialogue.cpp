@@ -1201,6 +1201,7 @@ namespace Dnd
     }
 
     bool IsTownsfolk(Creature* c) { return TownRoleOf(c) >= 0; }
+    std::string TownRoleName(Creature* c) { int r = TownRoleOf(c); return r >= 0 ? sRoles[r].role : std::string(); }
     static std::string TownGames(int role) { return role >= 0 && role < int(sRoles.size()) ? sRoles[role].games : ""; }
 
     void LoadTownProgress(Player* p)
