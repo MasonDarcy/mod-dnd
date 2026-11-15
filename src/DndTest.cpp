@@ -4121,10 +4121,10 @@ namespace
                         Acore::StringFormat("no playercreateinfo for race {} class {}", race, cls));
             });
         });
-        add("town.neighbours_in_one_trade_say_different_things", [=](Script& s)
+        add("town.every_kharanos_villager_has_their_own_talk", [=](Script& s)
         {
-            // Kharanos: the villagers of one trade (its guards, its folk...) get different whole conversations
-            // (townsfolk_more.py) - not just a different opening line over the same checks
+            // Kharanos: every villager has a conversation of their own (villagers_kharanos.py, keyed "=name") - no two
+            // offer the same opening check, and each is matched by name, not by trade
             BotOpt o{ FIGHTER, 1 };
             o.at = true;
             o.map = 0;
@@ -4140,8 +4140,9 @@ namespace
                 for (auto const& [spawn, k] : p->GetMap()->GetCreatureBySpawnIdStore())
                     if (k->IsInWorld() && k->GetExactDist2d(p) <= 120.f)
                         around.push_back(k);
-                std::map<std::string, std::set<std::string>> byRole;     // role -> the first option each villager offers
-                std::map<std::string, int> count;
+                std::map<std::string, std::string> firstOf;              // villager -> the first option they offer
+                std::set<std::string> roles;
+                int talked = 0, own = 0;
                 for (Creature* k : around)
                 {
                     if (!IsTownsfolk(k))
@@ -4149,24 +4150,22 @@ namespace
                     ClearMsgs();
                     if (!StartTownTalk(p, k) || !InDialogue(p))
                         continue;
-                    std::vector<std::string> opts = MsgsBy(p, "DO^");
+                    ++talked;
                     std::string role = TownRoleName(k);
+                    roles.insert(role);
+                    if (role.find('#') != std::string::npos || role.rfind("guard:", 0) == 0)
+                        ++own;                                           // a person's own role, or a named guard's
+                    std::vector<std::string> opts = MsgsBy(p, "DO^");
                     if (!opts.empty())
-                    {
-                        byRole[role].insert(opts.front());
-                        ++count[role];
-                    }
+                        firstOf[k->GetName()] = opts.front();
                     CloseDialogue(p, false);
                 }
-                int checked = 0;
-                for (auto const& [role, firsts] : byRole)
-                    if (count[role] >= 3)
-                    {
-                        ++checked;
-                        Check(c, firsts.size() >= 2, Acore::StringFormat("Kharanos {} villagers ({}): more than one "
-                            "conversation among them ({})", role, count[role], firsts.size()));
-                    }
-                Check(c, checked >= 1, "a trade with three or more villagers in Kharanos");
+                std::set<std::string> distinct;
+                for (auto const& [who, first] : firstOf)
+                    distinct.insert(first);
+                Check(c, talked >= 20, Acore::StringFormat("plenty of villagers in Kharanos ({})", talked));
+                CheckEq(c, double(own), double(talked), "every one of them has a talk of their own");
+                CheckEq(c, double(distinct.size()), double(firstOf.size()), "and no two open with the same check");
             });
         });
         add("town.an_innkeeper_makes_their_inn_your_home", [=](Script& s)

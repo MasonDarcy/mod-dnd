@@ -1184,7 +1184,9 @@ namespace Dnd
         uint32 zone = c->GetMap()->GetZoneId(c->GetPhaseMask(), c->GetPositionX(), c->GetPositionY(), c->GetPositionZ());
         if (!IsTownZone(zone))
             return -1;
-        std::string who = c->GetName() + "|" + ct->SubName;
+        std::string name = c->GetName();
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        std::string who = name + "|" + ct->SubName;
         std::transform(who.begin(), who.end(), who.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
         std::string faction = "f" + std::to_string(c->GetFaction());
         for (std::size_t i = 0; i < sRoles.size(); ++i)
@@ -1192,6 +1194,12 @@ namespace Dnd
             {
                 if (sRoles[i].zone && sRoles[i].zone != zone)
                     break;                   // another town's own role
+                if (k.size() > 1 && k[0] == '=')
+                {
+                    if (name == k.substr(1))
+                        return int(i);       // "=name": this one villager's own talk (or one generic name's pool)
+                    continue;
+                }
                 if (k == "*" || k == faction)
                     return int(i);
                 if (!IsFactionKey(k) && who.find(k) != std::string::npos)
