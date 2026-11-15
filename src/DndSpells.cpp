@@ -154,6 +154,14 @@ namespace Dnd
         { SPELL_FROST_BOMB,       COST_ACTION,  -1,   false,      false },
     };
 
+    std::vector<uint32> AllActionIds()
+    {
+        std::vector<uint32> out;
+        for (ActionInfo const& a : sActions)
+            out.push_back(a.spellId);
+        return out;
+    }
+
     ActionInfo const* GetAction(uint32 spellId)
     {
         for (ActionInfo const& a : sActions)

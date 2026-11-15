@@ -3523,6 +3523,84 @@ namespace
             ExpectSaw(s, "cleaned me out");
             money(s, "no third game: 10 silver left in a 60 silver purse", 5000);
         });
+        add("jig.become_test_and_go_back", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Expect(s, "there's open ground at the jig's spot on the Shimmering Flats", [](Ctx&)
+            {
+                Map* m = sMapMgr->CreateBaseMap(1);
+                if (!m)
+                    return false;
+                m->LoadGrid(-5980.f, -3760.f);
+                float g = m->GetHeight(-5980.f, -3760.f, MAX_HEIGHT);
+                return g > -80.f && g < -30.f;
+            });
+            Act(s, [](Ctx& c) { sMsgs.clear(); OpenJig(Bot(c), false); });
+            Expect(s, "level 6 and a list of every spell, class action and item", [](Ctx& c)
+            {
+                int spells = 0, classes = 0, items = 0;
+                for (std::string const& m : MsgsBy(Bot(c), "JE^"))
+                {
+                    std::vector<std::string> f = Split(m, '^');
+                    if (f.size() > 6)
+                        (f[2] == "spell" ? spells : (f[2] == "class" ? classes : items))++;
+                }
+                return Bot(c)->GetLevel() == 6 && spells > 30 && classes > 20 && items > 15 && Saw("JD");
+            });
+            Act(s, [](Ctx& c)
+            {
+                int idx = -1;                        // Moonbeam: a druid's
+                for (std::string const& m : MsgsBy(Bot(c), "JE^"))
+                {
+                    std::vector<std::string> f = Split(m, '^');
+                    if (f.size() > 6 && f[5] == std::to_string(uint32(SPELL_MOONBEAM)))
+                        idx = std::atoi(f[1].c_str());
+                }
+                Check(c, idx >= 0, "Moonbeam is on the list");
+                c.v["idx"] = idx;
+                sMsgs.clear();
+                JigMessage(Bot(c), Acore::StringFormat("ready^{}", idx));
+            });
+            Expect(s, "a druid now, with Moonbeam on action button 1", [](Ctx& c)
+            {
+                ActionButton const* ab = Bot(c)->GetActionButton(0);
+                return IsClass(Bot(c), CLASS_DND_DRUID) && Bot(c)->HasSpell(SPELL_MOONBEAM) && ab && ab->GetAction() == SPELL_MOONBEAM &&
+                    Saw("JS^");
+            });
+            Expect(s, "in a fight with three sparring partners, one of them frail", [](Ctx& c)
+            {
+                Encounter* e = EncounterOf(Bot(c)->GetGUID());
+                if (!e)
+                    return false;
+                int dummies = 0, frail = 0;
+                for (Combatant const& o : e->order)
+                    if (!o.player && IsJigDummy(o.guid))
+                    {
+                        ++dummies;
+                        if (Unit* u = e->GetUnit(o); u && u->GetMaxHealth() < 100)
+                            ++frail;
+                    }
+                return dummies == 3 && frail == 1;
+            });
+            Act(s, [](Ctx& c) { GetSheet(Bot(c)).slotsUsed[2] = 2; GetSheet(Bot(c)).wildShapeUsed = 2; JigRefill(Bot(c)); });
+            Expect(s, "a turn in the jig gives everything back", [](Ctx& c)
+            {
+                return GetSheet(Bot(c)).slotsUsed[2] == 0 && GetSheet(Bot(c)).wildShapeUsed == 0;
+            });
+            Act(s, [](Ctx& c)
+            {
+                sMsgs.clear();
+                JigMessage(Bot(c), Acore::StringFormat("verdict^{}^f^the beam^drifts", int(c.v["idx"])));
+            });
+            ExpectSaw(s, "^fail");
+            Act(s, [](Ctx& c) { JigMessage(Bot(c), Acore::StringFormat("verdict^{}^c^", int(c.v["idx"]))); });  // (the jig's own verdict file stays clean)
+            Act(s, [](Ctx& c) { sMsgs.clear(); LeaveJig(Bot(c), false); });
+            Expect(s, "back to a level 1 wizard: no Moonbeam, no fight, no partners", [](Ctx& c)
+            {
+                return IsClass(Bot(c), CLASS_WIZARD) && Bot(c)->GetLevel() == 1 && !Bot(c)->HasSpell(SPELL_MOONBEAM) &&
+                    !InCombat(Bot(c)) && !InJig(Bot(c)) && Saw("JX");
+            });
+        });
         add("rest.no_hearthing_out_of_a_fight", [=](Script& s)
         {
             AddBot(s, { FIGHTER, 1 });

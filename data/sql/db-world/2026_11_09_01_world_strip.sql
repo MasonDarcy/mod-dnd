@@ -787,6 +787,44 @@ INSERT INTO `npc_vendor` (`entry`, `slot`, `item`, `maxcount`, `incrtime`, `Exte
 (2816, 1, 799, 0, 0, 0),
 (2816, 2, 6524, 0, 0, 0);
 UPDATE `creature_template` SET `npcflag` = `npcflag` | 128 WHERE `entry` IN (945,1104,829,1273,1243,1240,1238,1691,2326,3177,1682,167,1469,1441,1450,1461,1459,1453,1452,1362,222,954,1685,1687,9179,5101,5102,5106,5123,5129,1285,1287,1289,1323,1341,1297,1298,1314,1319,1320,1313,5509,5510,54,2046,74,151,2329,78,1213,152,1198,1250,1645,1249,14624,14627,14626,14628,1471,2810,2808,2812,2816);
+DROP TABLE IF EXISTS `dnd_jig_item`;
+CREATE TABLE `dnd_jig_item` (
+  `entry` INT UNSIGNED NOT NULL,
+  `name` VARCHAR(64) NOT NULL,
+  `kind` VARCHAR(16) NOT NULL,
+  PRIMARY KEY (`entry`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT INTO `dnd_jig_item` (`entry`, `name`, `kind`) VALUES
+(118, 'Potion of Healing', 'potion'),
+(858, 'Potion of Greater Healing', 'potion'),
+(1710, 'Potion of Superior Healing', 'potion'),
+(954, 'Scroll of Healing Word', 'scroll'),
+(955, 'Scroll of Cure Wounds', 'scroll'),
+(1180, 'Scroll of Bless', 'scroll'),
+(1181, 'Scroll of Sleep', 'scroll'),
+(3012, 'Scroll of Misty Step', 'scroll'),
+(3013, 'Scroll of Hold Person', 'scroll'),
+(1477, 'Scroll of Web', 'scroll'),
+(1478, 'Scroll of Fireball', 'scroll'),
+(1711, 'Scroll of Hypnotic Pattern', 'scroll'),
+(1712, 'Scroll of Spirit Guardians', 'scroll'),
+(2514, 'Arrow of Fire', 'arrow'),
+(2517, 'Arrow of Ice', 'arrow'),
+(3029, 'Arrow of Acid', 'arrow'),
+(3031, 'Arrow of Lightning', 'arrow'),
+(2103, 'Arrow of Slaying', 'arrow'),
+(16005, 'Alchemist\'s Fire', 'grenade'),
+(18512, 'Acid Vial', 'grenade'),
+(10562, 'Smokepowder Bomb', 'grenade'),
+(13180, 'Holy Water', 'grenade'),
+(32413, 'Frost Bomb', 'grenade'),
+(3825, 'Elixir of Vigour', 'elixir'),
+(13445, 'Elixir of Stoneskin', 'elixir'),
+(3391, 'Elixir of Hill Giant Strength', 'elixir'),
+(9088, 'Elixir of the Grave Ward', 'elixir'),
+(9187, 'Elixir of Quickness', 'elixir'),
+(13454, 'Elixir of Clarity', 'elixir'),
+(6373, 'Elixir of Fire Ward', 'elixir');
 
 -- the Watch (tools/guards.py): one named guard per post instead of dozens of identical ones
 DELETE c FROM `creature` c WHERE c.`map` = 0 AND ((c.`position_x` BETWEEN -6500 AND -4700 AND c.`position_y` BETWEEN -2700 AND 1000 AND NOT (c.`position_x` > -5080 AND c.`position_y` < -620)) OR (c.`position_x` BETWEEN -5960 AND -4600 AND c.`position_y` BETWEEN -4450 AND -2400) OR (c.`position_x` BETWEEN -4150 AND -2250 AND c.`position_y` BETWEEN -3700 AND -450) OR (c.`position_x` BETWEEN -2300 AND -550 AND c.`position_y` BETWEEN -4000 AND -1450) OR (c.`position_x` BETWEEN -7150 AND -6300 AND c.`position_y` BETWEEN -2050 AND -450) OR (c.`position_x` BETWEEN -5080 AND -4550 AND c.`position_y` BETWEEN -1330 AND -845) OR (c.`position_x` BETWEEN -9120 AND -8250 AND c.`position_y` BETWEEN 260 AND 1450) OR (c.`position_x` BETWEEN -10120 AND -8650 AND c.`position_y` BETWEEN -1350 AND 950)) AND c.`id` IN (727,13076,853,5595) AND c.`guid` NOT IN (327,329,353,410,291,229,212,4133,4479,4067,150,2283,161007,145,140,4471,4159,6336,3028,6358,44,46,57,101,106,114,121,1750,1759,1817,1893,2009,2024,2081);

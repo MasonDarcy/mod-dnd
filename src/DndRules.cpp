@@ -445,6 +445,8 @@ namespace Dnd
         static CreatureStats def;
         if (IsBrawler(c->GetGUID()))
             return BrawlerStats();
+        if (IsJigDummy(c->GetGUID()))
+            return JigDummyStats(c->GetGUID());
         CreatureStats const* s = GetStats(c->GetEntry());
         if (s)
             return *s;

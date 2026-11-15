@@ -60,6 +60,8 @@ namespace Dnd
             TreatGameResult(p, msg.substr(10));
         else if (msg.rfind("tav^", 0) == 0)
             TavernMessage(p, msg.substr(4));
+        else if (msg.rfind("jig^", 0) == 0)
+            JigMessage(p, msg.substr(4));
         else if (msg.rfind("say^", 0) == 0)
             DialogueChoose(p, uint32(std::atoi(msg.c_str() + 4)));
         else if (msg.rfind("hover^", 0) == 0)
@@ -130,6 +132,7 @@ public:
 
     void OnPlayerLogout(Player* p) override
     {
+        ForgetJig(p);                            // (the spell jig's borrowed build goes back before anything is saved)
         ForgetDowned(p->GetGUID());
         CloseDialogue(p, false);
         OnPlayerLeft(p);
@@ -463,6 +466,7 @@ public:
             { "whereis", HandleWhereIs, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "fightdump", HandleFightDump, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "treatsback", HandleTreatsBack, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "jig", HandleJig, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
         };
         static ChatCommandTable root = { { "dnd", dndTable } };
         return root;
@@ -479,6 +483,14 @@ public:
     {
         if (Player* p = handler->GetPlayer())
             LongRest(p);
+        return true;
+    }
+
+    // the spell jig: every spell, class action and consumable, by hand, on the Shimmering Flats (DndJig.cpp)
+    static bool HandleJig(ChatHandler* handler)
+    {
+        if (Player* p = handler->GetPlayer())
+            OpenJig(p);
         return true;
     }
 

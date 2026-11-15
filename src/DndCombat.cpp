@@ -1397,6 +1397,9 @@ namespace Dnd
         c.attackedUnarmed = false;
         c.attackedLight = false;
         c.stepJump = false;
+        if (c.player)
+            if (Player* jp = u->ToPlayer(); jp && InJig(jp))
+                JigRefill(jp);                   // the spell jig: every turn starts with everything back
         if (c.reckless || c.dodging)                 // Reckless Attack and Patient Defense last to your next turn
         {
             c.reckless = c.dodging = false;
@@ -1809,6 +1812,16 @@ namespace Dnd
         e->brawlPlayer = p->GetGUID();
         e->name = Acore::StringFormat("a brawl with {}", npc->GetName());
         return true;
+    }
+
+    // the fight simply ends (the spell jig starting a fresh one): the creatures reset, nobody goes anywhere
+    void AbandonFight(Player* p)
+    {
+        Encounter* e = p ? EncounterOf(p->GetGUID()) : nullptr;
+        if (!e)
+            return;
+        sSnapshots.erase(p->GetGUID());
+        Defeat(*e, true);
     }
 
     void OnUnitDied(Unit* u)

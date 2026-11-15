@@ -883,7 +883,18 @@ namespace Dnd
     }
     void SetTestStats(CreatureStats const& s);           // DndRules.cpp: test stat blocks, ahead of dnd_creature
     void ClearTestStats();
-    bool AddCreatureToFight(Creature* c, Unit* inFightWith);   // DndCombat.cpp: one more enemy in a running fight
+    bool AddCreatureToFight(Creature* c, Unit* inFightWith);
+    void AbandonFight(Player* p);                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
+    // the spell jig (DndJig.cpp, `.dnd jig`): every spell, class action and consumable, tested by hand on the Shimmering Flats
+    bool InJig(Player* p);
+    bool IsJigDummy(ObjectGuid g);
+    CreatureStats const& JigDummyStats(ObjectGuid g);
+    void JigRefill(Player* p);                   // the start of the player's turn in the jig: everything back
+    void OpenJig(Player* p, bool teleport = true);
+    void LeaveJig(Player* p, bool teleport = true);
+    void JigMessage(Player* p, std::string const& msg);
+    void ForgetJig(Player* p);                   // logging out: the build goes back first
+    std::vector<uint32> AllActionIds();          // DndSpells.cpp: every action the rules know (sActions)   // DndCombat.cpp: one more enemy in a running fight
     void AbortEncounter(Unit* u);                        // end u's fight on the spot: no XP, nothing reset
     CreatureAI* MakeCombatantAI(Creature* c);      // dnd_loader.cpp: the encounter AI, for summoned creatures
 
