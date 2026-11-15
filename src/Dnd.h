@@ -41,6 +41,7 @@ namespace Dnd
         SPELL_SHOVE             = 200006,
         SPELL_HELP              = 200010,   // an ally who is down gets back up with 1 HP
         SPELL_FLEE              = 200011,   // leave the fight: nobody within 20 m of you
+        SPELL_THROW             = 200012,   // the main-hand weapon, if it's made to be thrown (dagger, handaxe, spear...)
         // the bard (WoW Paladin)
         SPELL_VICIOUS_MOCKERY   = 201001,   // cantrip: WIS save, psychic, disadvantage on its next attack
         SPELL_BARDIC_INSPIRATION = 201002,  // an ally holds a die for their next roll
@@ -731,6 +732,7 @@ namespace Dnd
     void PrepareCreatureAttack(Creature* c, Unit* target, bool ranged);   // roll now (the roll feed shows it)...
     void ApplyPendingAttack(Unit* attacker);                              // ...land it later
     uint32 CreatureMissile(Creature* c);                                 // the missile spell a creature's ranged attack flies as
+    bool ThrowableWeapon(Player* p);                                     // the main-hand weapon can be thrown (Throw)
     bool IsCreatureMissile(uint32 spellId);
     bool HasPendingAttack(Unit* attacker);
     void LongRest(Player* p);

@@ -2489,6 +2489,46 @@ namespace
             Cast(s, SPELL_RANGED_ATTACK);
             ExpectDrop(s, 10, 0, "hits AC 12 with 4 + 2 + 3 + 3; 2d2 (4) + STR 3 + 3 again");
         });
+        // Throw: the main-hand weapon at range. A handaxe from 8 m: 9 + STR 3 + prof 2 = 14 hits AC 12; 1d6 (4) + 3 = 7
+        add("action.throw_a_handaxe", [=](Script& s)
+        {
+            AddBot(s, fig4);
+            Expect(s, "everyone has Throw", [](Ctx& c) { return Bot(c)->HasSpell(SPELL_THROW); });
+            Act(s, [](Ctx& c) { Equip(Bot(c), EQUIPMENT_SLOT_MAINHAND, 2134); });
+            AddMob(s, { 8.f, 0.f, Stats(HUMANOID, 12) });
+            StartFight(s);
+            Rig(s, { 9, 9 }, 4);
+            Cast(s, SPELL_THROW);
+            ExpectCastOk(s);
+            ExpectSaw(s, "Handaxe (thrown)");
+            ExpectNotSaw(s, "ranged attack in melee: disadvantage");
+            ExpectDrop(s, 7, 0, "hits AC 12 with 9 + 3 + 2; 1d6 (4) + STR 3");
+        });
+        // ... with Tavern Brawler, Strength again: STR 17 (+3), so 4 + 3 + 2 + 3 = 12 hits AC 12; 1d6 (4) + 3 + 3 = 10
+        add("action.throw_tavern_brawler", [=](Script& s)
+        {
+            AddBot(s, fig4);
+            Act(s, pick("feat^Tavern Brawler^STR"));
+            Act(s, [](Ctx& c) { Equip(Bot(c), EQUIPMENT_SLOT_MAINHAND, 2134); });
+            AddMob(s, { 8.f, 0.f, Stats(HUMANOID, 12) });
+            StartFight(s);
+            Rig(s, { 4, 4 }, 4);
+            Cast(s, SPELL_THROW);
+            ExpectDrop(s, 10, 0, "4 + 3 + 2 + 3 = 12 hits AC 12; 4 + 3 + 3");
+        });
+        // a battleaxe is a one-handed axe in WoW, like the handaxe - but it isn't made to be thrown
+        add("action.throw_refuses_a_battleaxe", [=](Script& s)
+        {
+            AddBot(s, fig4);
+            Act(s, [](Ctx& c) { Equip(Bot(c), EQUIPMENT_SLOT_MAINHAND, 20850); });
+            AddMob(s, { 8.f, 0.f, Stats(HUMANOID, 12) });
+            StartFight(s);
+            Cast(s, SPELL_THROW);
+            Expect(s, "refused, saying what can be thrown", [](Ctx& c)
+            {
+                return int(c.v["cast"]) != SPELL_CAST_OK && SawBy(Bot(c), "weapon made for throwing");
+            });
+        });
         add("feat.weapon_master", [=](Script& s)
         {
             AddBot(s, wiz4);

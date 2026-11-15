@@ -84,6 +84,7 @@ namespace Dnd
         { SPELL_FLEE,             COST_NONE,    -1,   true,       false },
         { SPELL_SHORT_REST,       COST_NONE,    -1,   false,      true  },
         { SPELL_RANGED_ATTACK,    COST_ACTION,  -1,   false,      false },
+        { SPELL_THROW,            COST_ACTION,  -1,   false,      false },
         { SPELL_OFFHAND_ATTACK,   COST_BONUS,   -1,   false,      false },
         { SPELL_FIRE_BOLT,        COST_ACTION,   0,   false,      false },
         { SPELL_RAY_OF_FROST,     COST_ACTION,   0,   false,      false },
@@ -170,7 +171,7 @@ namespace Dnd
     std::vector<uint32> const& CommonActions()
     {
         static std::vector<uint32> const v = { SPELL_END_TURN, SPELL_ATTACK, SPELL_DASH, SPELL_DISENGAGE, SPELL_JUMP, SPELL_SHOVE,
-            SPELL_SHORT_REST, SPELL_HELP, SPELL_FLEE };
+            SPELL_SHORT_REST, SPELL_HELP, SPELL_FLEE, SPELL_THROW };
         return v;
     }
 
@@ -197,7 +198,8 @@ namespace Dnd
     // (an arrow is a shot of the Attack action: Extra Attack can follow it)
     static bool IsAttackAction(uint32 id)
     {
-        return id == SPELL_ATTACK || id == SPELL_RANGED_ATTACK || IsManeuver(id) || id == SPELL_STUNNING_STRIKE || IsArrow(id);
+        return id == SPELL_ATTACK || id == SPELL_RANGED_ATTACK || id == SPELL_THROW || IsManeuver(id) || id == SPELL_STUNNING_STRIKE ||
+            IsArrow(id);
     }
     static bool HoldsBow(Player* p)
     {
@@ -1122,6 +1124,57 @@ namespace Dnd
         return hit;
     }
 
+    // a main-hand weapon with 5e's "thrown" property: any dagger or thrown weapon; otherwise by name, since WoW's types
+    // are too coarse (a Battleaxe is a one-handed axe like the Handaxe, but only the Handaxe flies)
+    bool ThrowableWeapon(Player* p)
+    {
+        Item* item = p->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+        if (!item || item->GetTemplate()->Class != ITEM_CLASS_WEAPON)
+            return false;
+        ItemTemplate const* t = item->GetTemplate();
+        if (t->SubClass == ITEM_SUBCLASS_WEAPON_DAGGER || t->SubClass == ITEM_SUBCLASS_WEAPON_THROWN)
+            return true;
+        for (char const* name : { "Handaxe", "Hand Axe", "Hatchet", "Javelin", "Spear", "Light Hammer", "Throwing" })
+            if (t->Name1.find(name) != std::string::npos)
+                return true;
+        return false;
+    }
+
+    // Throw: the main-hand weapon at range - its own dice and damage, the ability it swings with (a dagger the better of
+    // STR and DEX), proficiency and its magic; Tavern Brawler adds Strength again. A ranged attack: disadvantage with an
+    // enemy beside you (AttackRoll). It comes back to hand - nothing to pick up.
+    static bool PlayerThrowAttack(Player* p, Unit* target, SpellInfo const* spell)
+    {
+        if (!ThrowableWeapon(p))
+            return false;
+        WeaponInfo w = PlayerWeapon(p, EQUIPMENT_SLOT_MAINHAND);
+        w.thrown = true;
+        int mod = AbilityMod(p, w.ability);
+        int bonus = mod + (w.proficient ? Prof(Level(p)) : 0);
+        w.dice.bonus = mod;
+        if (int magic = MagicBonus(p, EQUIPMENT_SLOT_MAINHAND))
+        {
+            bonus += magic;
+            w.dice.bonus += magic;
+        }
+        if (HasFeat(p, "Tavern Brawler"))
+        {
+            int str = AbilityMod(p, STR);    // Tavern Brawler: Strength again on thrown attacks and damage
+            bonus += str;
+            w.dice.bonus += str;
+        }
+        if (IsFighter(p) && Level(p) >= 3 && IsSubclass(p, "Champion"))
+            sCritMin = 19;                   // Improved Critical
+        p->SetFacingToObject(target);
+        sSneakReady = SneakReady(p);
+        bool hit = AttackRoll(p, target, w.name + " (thrown)", bonus, w.dice, w.type, spell, false, false);
+        sSneakReady = false;
+        if (hit)
+            ApplyItemRiders(p, target, EQUIPMENT_SLOT_MAINHAND);
+        sCritMin = 20;
+        return hit;
+    }
+
     // ---------------------------------------------------------------- arrows and grenades
     static void SetBurning(Player* p, Unit* target)
     {
@@ -1824,6 +1877,9 @@ namespace Dnd
                 break;
             case SPELL_RANGED_ATTACK:
                 PlayerRangedAttack(p, target, spell);
+                break;
+            case SPELL_THROW:
+                PlayerThrowAttack(p, target, spell);
                 break;
             case SPELL_OFFHAND_ATTACK:
                 PlayerOffhandAttack(p, target, spell);
@@ -3344,7 +3400,7 @@ namespace Dnd
             if (!p->HasSpell(id))
             {
                 p->learnSpell(id);
-                if (id == SPELL_HELP || id == SPELL_FLEE)
+                if (id == SPELL_HELP || id == SPELL_FLEE || id == SPELL_THROW)
                     PutOnBar(p, id);             // (added after characters were made: theirs too)
             }
         // WoW's weapon and armour skills, for everyone: who may wear and wield what is the D&D engine's business
@@ -3745,6 +3801,8 @@ class spell_dnd_generic : public SpellScript
             why = "Off-hand attack: hold a one-handed weapon in each hand.";
         else if (id == SPELL_OFFHAND_ATTACK && !(me && me->attackedLight))
             why = "Off-hand attack: take the Attack action with your main-hand weapon first.";
+        else if (id == SPELL_THROW && !ThrowableWeapon(p))
+            why = "Throw: hold a weapon made for throwing in your main hand (dagger, handaxe, spear, light hammer or javelin).";
         else if (id == SPELL_RANGED_ATTACK && !p->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
             why = "You have no ranged weapon equipped (bow, crossbow, gun or thrown weapon in the ranged slot).";
         else if (a->combatOnly && !fighting)
