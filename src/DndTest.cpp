@@ -1374,6 +1374,7 @@ namespace
             }
             AckTeleport(p);
             Check(c, InDialogue(p), "the conversation opened");
+            p->SetMoney(std::max<uint32>(p->GetMoney(), 100000));    // (a wager or a price is always within reach)
             c.v["picks"] = 0;
             c.v["idle"] = 0;
         });
@@ -1387,6 +1388,17 @@ namespace
                 return true;
             std::vector<std::pair<uint32, std::string>> opts;
             bool shown = false;
+            bool tableShut = std::find(sMsgs.begin(), sMsgs.end(), "GX") != sMsgs.end();   // (its last GS is stale)
+            for (std::string const& m : sMsgs)
+                if (!tableShut && m.rfind("GS^", 0) == 0)
+                {
+                    std::vector<std::string> f = Split(m, '^');
+                    sMsgs.clear();
+                    if (f.size() > 3 && f[3] == "yours")
+                        TavernMessage(p, f[1] == "drink" ? "act^concede" : "act^stand");
+                    TavernMessage(p, "leave");
+                    return false;
+                }
             for (std::string const& m : sMsgs)
             {
                 if (m.rfind("DO^", 0) == 0)
@@ -3346,17 +3358,20 @@ namespace
         });
 
         // ============================================================ tavern games (DndTavern.cpp)
-        // a table with a summoned villager, the bot flush with coin
-        auto table = [](Script& s, std::string games)
+        // a table with a summoned villager, the bot flush with coin; the host calm unless asked for a hot head
+        auto table = [](Script& s, std::string games, int temper = 0)
         {
             AddMob(s, { 2.f, 0.f });
-            s.Do([games](Ctx& c)
+            s.Do([games, temper](Ctx& c)
             {
                 Player* p = Bot(c);
                 p->SetMoney(100000);
                 c.v["money"] = 100000.f;
+                c.v["mobhp"] = double(Mob(c)->GetMaxHealth());
                 sMsgs.clear();
+                SetTestTemper(temper);
                 OpenTavern(p, Mob(c), games);
+                SetTestTemper(-1);
             });
         };
         auto tav = [](std::string msg) { return [msg](Ctx& c) { sMsgs.clear(); TavernMessage(Bot(c), msg); }; };
@@ -3382,7 +3397,10 @@ namespace
         {
             AddBot(s, wiz1);
             table(s, "dice,cards");
-            Expect(s, "GO with the games and a full purse", [](Ctx&) { return Saw("GO^") && Saw("^dice,cards^3000^"); });
+            Expect(s, "GO with the games, a full purse (60 silver) and the top wager (25 silver)", [](Ctx&)
+            {
+                return Saw("GO^") && Saw("^dice,cards^6000^") && Saw("^2500");
+            });
         });
         add("tavern.highroll_pair_beats_a_total", [=](Script& s)
         {
@@ -3494,16 +3512,194 @@ namespace
         {
             AddBot(s, wiz1);
             table(s, "dice");
-            for (int i = 0; i < 3; ++i)
+            for (int i = 0; i < 2; ++i)
             {
                 Rig(s, { 1, 2, 4, 6, 6, 6 });
-                Act(s, tav("play^dice^1000"));
+                Act(s, tav("play^dice^2500"));
                 Act(s, tav("act^stand"));
             }
-            money(s, "three wins of 10 gp", 3000);
-            Act(s, tav("play^dice^1000"));
+            money(s, "two wins of 25 silver", 5000);
+            Act(s, tav("play^dice^2500"));
             ExpectSaw(s, "cleaned me out");
-            money(s, "no fourth game", 3000);
+            money(s, "no third game: 10 silver left in a 60 silver purse", 5000);
+        });
+        add("rest.no_hearthing_out_of_a_fight", [=](Script& s)
+        {
+            AddBot(s, { FIGHTER, 1 });
+            AddMob(s, { 2.f, 0.f });
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                c.v["x"] = p->GetPositionX();
+                c.v["cast"] = double(p->CastSpell(p, 8690, false));
+            });
+            Expect(s, "the hearthstone is refused in a fight", [](Ctx& c) { return int(c.v["cast"]) != int(SPELL_CAST_OK); });
+            Expect(s, "and nobody goes anywhere", [](Ctx& c)
+            {
+                return std::fabs(Bot(c)->GetPositionX() - c.v["x"]) < 1.0 && InCombat(Bot(c));
+            });
+        });
+        add("tavern.wager_any_whole_silver", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            table(s, "dice");
+            Act(s, tav("play^dice^750"));
+            ExpectNotSaw(s, "GS^");                          // 7 silver 50 copper: not a whole silver
+            Act(s, tav("play^dice^2600"));
+            ExpectNotSaw(s, "GS^");                          // over the 25 silver top
+            Act(s, tav("play^dice^700"));
+            ExpectSaw(s, "GS^dice^700^yours^");
+            money(s, "7 silver on the table", -700);
+        });
+        add("tavern.hothead_swings_at_a_cheat_and_loses", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            table(s, "dice", 1);
+            Rig(s, { 2, 3, 4, 1, 2, 4 });
+            Act(s, tav("play^dice^500"));
+            Rig(s, { 1, 1 });
+            Act(s, tav("act^cheat^0"));
+            ExpectSaw(s, "comes round the table swinging");
+            money(s, "the stake is forfeit", -500);
+            Act(s, tav("leave"));
+            ExpectNotSaw(s, "GX");                           // too late to walk away
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 2000); });
+            Expect(s, "a brawl starts with the villager", [](Ctx& c)
+            {
+                Encounter* e = EncounterOf(Mob(c)->GetGUID());
+                return e && e->brawl && IsBrawler(Mob(c)->GetGUID()) && InCombat(Bot(c));
+            });
+            Act(s, [](Ctx& c)
+            {
+                DamageCtx d;
+                d.attacker = Bot(c);
+                d.victim = Mob(c);
+                d.amount = 1000;
+                d.type = DMG_BLUDGEONING;
+                ApplyDamage(d);
+            });
+            Expect(s, "out cold, not dead", [](Ctx& c) { return Mob(c)->IsAlive(); });
+            s.Until([](Ctx& c) { return !InCombat(Bot(c)); }, "the brawl to end", 6000);
+            Expect(s, "the villager up again: their own health, whole", [](Ctx& c)
+            {
+                Creature* m = Mob(c);
+                return !IsBrawler(m->GetGUID()) && double(m->GetMaxHealth()) == c.v["mobhp"] && m->GetHealth() == m->GetMaxHealth();
+            });
+            money(s, "beaten, they throw the stake back", 0);
+        });
+        add("tavern.brawl_lost_costs_coin_not_life", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            table(s, "dice", 1);
+            Rig(s, { 2, 3, 4, 1, 2, 4 });
+            Act(s, tav("play^dice^500"));
+            Rig(s, { 1, 1 });
+            Act(s, tav("act^cheat^0"));
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 2000); });
+            Act(s, [](Ctx& c)
+            {
+                GetSheet(Bot(c)).tempHp = 0;
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = 1000;
+                d.type = DMG_BLUDGEONING;
+                ApplyDamage(d);
+            });
+            Expect(s, "out cold at 1 HP, not down or dead", [](Ctx& c)
+            {
+                return Bot(c)->IsAlive() && !IsDowned(Bot(c)) && Bot(c)->GetHealth() == 1;
+            });
+            s.Until([](Ctx& c) { return !InCombat(Bot(c)); }, "the brawl to end", 6000);
+            money(s, "the forfeit stake, and another 5 silver taken while out cold", -1000);
+            Expect(s, "the villager's own health is back", [](Ctx& c)
+            {
+                return !IsBrawler(Mob(c)->GetGUID()) && double(Mob(c)->GetMaxHealth()) == c.v["mobhp"];
+            });
+        });
+        add("tavern.sore_loser_talked_down", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            table(s, "dice", 1);
+            Rig(s, { 1, 2, 4, 6, 6, 6 });
+            Act(s, tav("play^dice^2500"));
+            Act(s, tav("act^stand"));
+            ExpectNotSaw(s, "TD^Persuasion");                // 35 silver left of 60: not cleaned out yet
+            Rig(s, { 1, 2, 4, 6, 6, 6, 20 });
+            Act(s, tav("play^dice^2500"));
+            Act(s, tav("act^stand"));
+            ExpectSaw(s, "TD^Persuasion^20^");               // 10 silver left: under a third
+            ExpectSaw(s, "pays up");
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 2000); });
+            Expect(s, "no brawl", [](Ctx& c) { return !InCombat(Bot(c)); });
+            money(s, "two wins of 25 silver, kept", 5000);
+        });
+        add("tavern.sore_loser_comes_to_blows", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            table(s, "dice", 1);
+            for (int i = 0; i < 2; ++i)
+            {
+                Rig(s, i == 0 ? std::vector<int>{ 1, 2, 4, 6, 6, 6 } : std::vector<int>{ 1, 2, 4, 6, 6, 6, 1 });
+                Act(s, tav("play^dice^2500"));
+                Act(s, tav("act^stand"));
+            }
+            ExpectSaw(s, "kicks back their chair");
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 2000); });
+            Expect(s, "a brawl starts", [](Ctx& c) { Encounter* e = EncounterOf(Mob(c)->GetGUID()); return e && e->brawl; });
+            Act(s, [](Ctx& c)
+            {
+                GetSheet(Bot(c)).tempHp = 0;
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = 1000;
+                d.type = DMG_BLUDGEONING;
+                ApplyDamage(d);
+            });
+            s.Until([](Ctx& c) { return !InCombat(Bot(c)); }, "the brawl to end", 6000);
+            money(s, "lost: they take the last hand's 25 silver back", 2500);
+        });
+        add("tavern.wager_is_one_hand", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 2.f, 0.f });
+            Act(s, [](Ctx& c)
+            {
+                Bot(c)->SetMoney(100000);
+                c.v["money"] = 100000.f;
+                sMsgs.clear();
+            });
+            Rig(s, { 2, 3, 4, 1, 2, 4 });
+            Act(s, [](Ctx& c) { Check(c, OpenWager(Bot(c), Mob(c), "dice", 300), "the wager's table opens"); });
+            Expect(s, "straight to the hand, flagged a wager", [](Ctx&) { return Saw("^300^1") && Saw("GS^dice^300^yours^"); });
+            money(s, "the stake is on the table", -300);
+            Act(s, tav("menu"));
+            ExpectNotSaw(s, "GO^");                          // no menu
+            Act(s, tav("play^dice^500"));
+            ExpectNotSaw(s, "GS^");                          // no other game
+            Act(s, tav("leave"));
+            ExpectSaw(s, "GX");
+            money(s, "walking away mid-hand loses it", -300);
+            Act(s, [](Ctx& c) { WagerResult(Bot(c), 1); });  // (no talk waiting on it: nothing happens)
+            money(s, "and nothing more", -300);
+        });
+        add("tavern.wager_cheat_caught_is_no_brawl", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 2.f, 0.f });
+            Act(s, [](Ctx& c) { Bot(c)->SetMoney(100000); c.v["money"] = 100000.f; sMsgs.clear(); });
+            Rig(s, { 2, 3, 4, 1, 2, 4 });
+            Act(s, [](Ctx& c) { OpenWager(Bot(c), Mob(c), "dice", 300); });
+            Rig(s, { 1, 1 });
+            Act(s, tav("act^cheat^0"));
+            ExpectSaw(s, "hand goes to a hilt");
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 2000); });
+            Expect(s, "no brawl starts at the table (the talk takes it on)", [](Ctx& c) { return !InCombat(Bot(c)); });
+            Act(s, [](Ctx& c) { UpdateTavern(Bot(c), 4000); });
+            ExpectSaw(s, "GX");
+            money(s, "the stake is lost", -300);
         });
         add("tavern.walking_away_forfeits_the_hand", [=](Script& s)
         {
@@ -4657,8 +4853,11 @@ namespace
                 ClearMsgs();
                 OpenTavern(p, k, "dice");
                 bool inn = false;
-                for (std::string const& m : MsgsBy(p, "GO^"))
-                    inn = inn || (m.size() > 2 && m.substr(m.size() - 2) == "^1");
+                for (std::string const& m : MsgsBy(p, "GO^"))       // GO^name^games^purse^money^inn^maxbet
+                {
+                    std::vector<std::string> f = Split(m, '^');
+                    inn = inn || (f.size() > 5 && f[5] == "1");
+                }
                 Check(c, inn, "his table says it's an inn (the home button)");
                 HandleClientMessage(p, "tav^leave");
             });

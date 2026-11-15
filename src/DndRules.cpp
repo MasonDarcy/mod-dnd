@@ -443,6 +443,8 @@ namespace Dnd
     CreatureStats const& StatsOrDefault(Creature* c)
     {
         static CreatureStats def;
+        if (IsBrawler(c->GetGUID()))
+            return BrawlerStats();
         CreatureStats const* s = GetStats(c->GetEntry());
         if (s)
             return *s;
@@ -1000,6 +1002,14 @@ namespace Dnd
                 EndWildShape(p, " - the beast falls, and the rest of the blow is yours");
         }
 
+        // a brawl: a blow that would drop anyone to 0 leaves them at 1 and out cold instead (nobody dies in a bar fight)
+        bool knockOut = false;
+        if (Encounter* be = EncounterOf(d.victim->GetGUID()); be && be->brawl && amount > 0 && amount >= int(d.victim->GetHealth()))
+        {
+            amount = int(d.victim->GetHealth()) - 1;
+            knockOut = true;
+            note += " (out cold)";
+        }
         // a player in a fight: 0 HP knocks them down (only damage past 0 as big as their whole HP kills outright);
         // hitting someone who is already down costs them death saves instead of hit points
         bool knockDown = false;
@@ -1071,6 +1081,8 @@ namespace Dnd
         }
         if (knockDown)
             KnockDown(d.victim->ToPlayer());        // (concentration ends with it)
+        if (knockOut)
+            BrawlKnockOut(d.victim);
         AfterDamage(d, amount, int(absorbed));     // Armor of Agathys, Hellish Rebuke, the patrons' gifts
         if (Player* p = d.victim->ToPlayer(); p && !knockDown)
             ConcentrationCheck(p, amount + int(absorbed), d.attacker);   // (damage soaked by temporary HP still counts)

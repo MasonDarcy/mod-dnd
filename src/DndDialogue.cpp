@@ -75,6 +75,8 @@ namespace Dnd
         std::set<std::string> clues;         // what the player has learned (and which one-time options are used)
         int patience = 0, patienceMax = 0;
         bool secured = false;                // offered a no-roll way out to PEACE: later failures don't start fights
+        bool wagering = false;               // a wager's hand is being played (the talk waits for WagerResult)
+        int32 wagerWin = 0, wagerLose = 0;   // where the talk goes on a win / a loss (a push comes back here)
         uint32 townSpawn = 0;                // a villager's chat (no encounter): PEACE pays their gift, SOUR closes it
         int townRole = -1;
         std::set<ObjectGuid> offered;        // a villager's chat: who nearby has been offered "Listen in" (DL / DLX)
@@ -348,6 +350,10 @@ namespace Dnd
     {
         if (req.empty())
             return true;
+        if (req.rfind("coin:", 0) == 0)          // "coin:500": a price to pay (shown to those who can pay it)
+            return p->GetMoney() >= uint32(std::atoi(req.c_str() + 5));
+        if (req.rfind("wager:", 0) == 0)         // "wager:dice:300": a game for a stake (can't cover it: said when picked)
+            return true;
         if (req.rfind("spell:", 0) == 0)
         {
             TalkSpell const* t = TalkSpellOf(req);
@@ -569,6 +575,7 @@ namespace Dnd
     }
 
     static void ShowNode(Player* p, Talk& t);
+    static void Proceed(Player* p, Talk t, Creature* speaker, EncounterDef const* def, bool town, int32 next);
     static void SendNode(Player* to, Player* p, Talk& t, DialogueNode const& n, Creature* speaker, std::string const& voiceName,
         std::string const& text);
     static void Peace(Player* p, Creature* speaker, EncounterDef const& def, bool halfXp = false);
@@ -814,7 +821,7 @@ namespace Dnd
             Watch(pl, talker, t);
     }
 
-    static void StartFight(Player* p, Creature* speaker, EncounterDef const& def, bool ambush = false)
+    static void StartFight(Player* p, Creature* speaker, EncounterDef const& def, bool ambush = false, bool surprisedUs = false)
     {
         Creature* source = nullptr;
         for (Creature* c : GroupOf(p->GetMap(), def))
@@ -827,6 +834,15 @@ namespace Dnd
         if (!source)
             return;                          // everyone walked off
         StartEncounter(source, p);
+        if (surprisedUs)                         // they come at you before you're ready: the players are Surprised
+        {
+            if (Encounter* e = EncounterOf(source->GetGUID()))
+                for (Combatant& c : e->order)
+                    if (c.player)
+                        c.surprised = true;
+            Log(p, "|cffff6040They're on you before you're ready - you're Surprised!|r");
+            return;
+        }
         if (!ambush)
             return;
         if (Encounter* e = EncounterOf(source->GetGUID()))
@@ -1020,6 +1036,8 @@ namespace Dnd
             p->GetSession()->SendListInventory(speaker->GetGUID());
             return;
         }
+        if (t.wagering)
+            return;                              // (the wager's hand first)
         DialogueOption const* opt = nullptr;
         for (DialogueOption const& o : node->second.options)
             if (o.idx == idx && Visible(p, t, o))
@@ -1047,6 +1065,35 @@ namespace Dnd
             }
             else
                 Log(p, Acore::StringFormat("   |cffb48cffYou cast {}.|r", ts->name));
+        }
+        if (opt->req.rfind("coin:", 0) == 0)
+        {
+            uint32 cost = std::min<uint32>(uint32(std::atoi(opt->req.c_str() + 5)), p->GetMoney());
+            p->ModifyMoney(-int32(cost));
+            Log(p, Acore::StringFormat("   |cffffd100You hand over {}.|r", MoneyText(cost)));
+            LogWatchers(p, Acore::StringFormat("   {} hands over {}.", p->GetName(), MoneyText(cost)));
+        }
+        if (opt->req.rfind("wager:", 0) == 0 && def)
+        {
+            // "wager:game:copper": a hand at their table; the talk waits on it (WagerResult takes it on from there)
+            std::vector<std::string_view> w = Acore::Tokenize(opt->req, ':', false);
+            std::string game = w.size() > 1 ? std::string(w[1]) : "dice";
+            uint32 stake = w.size() > 2 ? uint32(std::atoi(std::string(w[2]).c_str())) : 100;
+            if (p->GetMoney() < stake)
+            {
+                Log(p, Acore::StringFormat("|cffff8080You can't cover a stake of {}.|r", MoneyText(stake)));
+                ShowNode(p, itr->second);
+                return;
+            }
+            itr->second.wagering = true;
+            itr->second.wagerWin = opt->nextOk;
+            itr->second.wagerLose = opt->nextFail;
+            if (!OpenWager(p, speaker, game, stake))
+            {
+                itr->second.wagering = false;
+                ShowNode(p, itr->second);
+            }
+            return;
         }
         int32 next = opt->nextOk;
         if (!opt->skill.empty())
@@ -1089,10 +1136,20 @@ namespace Dnd
             }
         }
 
+        Proceed(p, t, speaker, def, town, next);
+    }
+
+    // where an answer leads: another line, the end of the talk, a fight, or peace (t is a copy: closing the talk
+    // erases the live one, and the town's ending still reads it)
+    static void Proceed(Player* p, Talk t, Creature* speaker, EncounterDef const* def, bool town, int32 next)
+    {
         if (next > 0)
         {
-            itr->second.node = uint32(next);
-            ShowNode(p, itr->second);
+            auto live = sTalks.find(p->GetGUID());
+            if (live == sTalks.end())
+                return;
+            live->second.node = uint32(next);
+            ShowNode(p, live->second);
         }
         else if (next == NEXT_END)
             CloseDialogue(p, true);
@@ -1102,6 +1159,8 @@ namespace Dnd
             if (next == NEXT_PEACE || next == NEXT_SOUR)
                 TownResult(p, speaker, t, next == NEXT_PEACE);
         }
+        else if (!def)
+            CloseDialogue(p, true);
         else if (next == NEXT_FIGHT || next == NEXT_AMBUSH)
         {
             CloseDialogue(p, false);
@@ -1112,6 +1171,31 @@ namespace Dnd
             CloseDialogue(p, false);
             Peace(p, speaker, *def, next == NEXT_SOUR);
         }
+    }
+
+    // the wager's hand is done: the talk goes on from its result
+    void WagerResult(Player* p, int outcome)
+    {
+        auto itr = sTalks.find(p->GetGUID());
+        if (itr == sTalks.end() || !itr->second.wagering)
+            return;
+        Talk& t = itr->second;
+        t.wagering = false;
+        Creature* speaker = SpeakerOf(p, t);
+        EncounterDef const* def = GetEncounterDef(t.encounterId);
+        if (!speaker || !def)
+        {
+            CloseDialogue(p, true);
+            return;
+        }
+        if (outcome == -2)
+        {
+            Log(p, Acore::StringFormat("|cffff4040{} sees the cheat. Steel comes out.|r", speaker->GetName()));
+            CloseDialogue(p, false);
+            StartFight(p, speaker, *def, false, true);
+            return;
+        }
+        Proceed(p, t, speaker, def, false, outcome > 0 ? t.wagerWin : (outcome < 0 ? t.wagerLose : int32(t.node)));
     }
 
     void UpdateDialogue(Player* p, uint32 diff)

@@ -3936,7 +3936,8 @@ class spell_dnd_generic : public SpellScript
     }
 };
 
-// Hearthstone = long rest, no cooldown.
+// Hearthstone = long rest, no cooldown - and never a way out of a fight (refused in one, and its teleport cancelled if a
+// fight starts while it's being cast).
 class spell_dnd_hearthstone : public SpellScript
 {
     PrepareSpellScript(spell_dnd_hearthstone);
@@ -3956,15 +3957,32 @@ class spell_dnd_hearthstone : public SpellScript
         Player* p = GetCaster() ? GetCaster()->ToPlayer() : nullptr;
         if (p && InCombat(p))
         {
-            Error(p, "You can't rest during a fight.");
+            Error(p, "You can't hearth out of a fight.");
+            return SPELL_FAILED_DONT_REPORT;
+        }
+        if (p && IsDowned(p))
+        {
+            Error(p, "You can't hearth while you're down.");
             return SPELL_FAILED_DONT_REPORT;
         }
         return SPELL_CAST_OK;
     }
 
+    // the ten-second cast began before a fight did (or before a fall): no teleport out of it
+    void HandleTeleport(SpellEffIndex effIndex)
+    {
+        Player* p = GetCaster() ? GetCaster()->ToPlayer() : nullptr;
+        if (p && (InCombat(p) || IsDowned(p)))
+        {
+            PreventHitDefaultEffect(effIndex);
+            Error(p, "The fight's still on - the hearthstone's pull fades.");
+        }
+    }
+
     void Register() override
     {
         OnCheckCast += SpellCheckCastFn(spell_dnd_hearthstone::CheckCast);
+        OnEffectHitTarget += SpellEffectFn(spell_dnd_hearthstone::HandleTeleport, EFFECT_0, SPELL_EFFECT_TELEPORT_UNITS);
         AfterCast += SpellCastFn(spell_dnd_hearthstone::AfterCastHandler);
     }
 };

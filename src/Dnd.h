@@ -398,6 +398,18 @@ namespace Dnd
     void TavernMessage(Player* p, std::string const& msg);
     void ForgetTavern(ObjectGuid guid);
     void ResetTavern(Player* p);
+    void SetTestTemper(int temper);           // self-test: every table's host calm (0) / hot-headed (1); -1 = their own
+    std::string MoneyText(uint32 copper);     // "1 gold 20 silver": money as the bag shows it
+    // an encounter's wager (a "wager:game:copper" dialogue option): one hand at a table against the talker, whose result
+    // the talk picks up (WagerResult: 1 won, 0 push, -1 lost, -2 caught cheating)
+    bool OpenWager(Player* p, Creature* npc, std::string const& game, uint32 stake);
+    void WagerResult(Player* p, int outcome);
+    // tavern brawls (DndCombat.cpp): a villager squares up to a player - a fight where 0 HP is out cold, not dying
+    bool StartBrawl(Player* p, Creature* npc);
+    void BrawlKnockOut(Unit* u);               // the damage gate: a brawler at 1 HP, out of the fight
+    bool IsBrawler(ObjectGuid g);
+    CreatureStats const& BrawlerStats();
+    void TavernBrawlOver(Player* p, Creature* host, bool won);   // DndTavern.cpp: the brawl's stakes settle
     void AddTestTreat(uint32 id, Player* at, std::string const& game, int dc, uint32 money, bool passive = false);   // self-test jig
     void SetTestTreat(uint32 id, std::string const& flag, std::string const& hint, std::string const& grant, uint32 item);
     int MagicBonus(Player* p, uint8 slot);         // DndSpells.cpp: a +N weapon's bonus to attack and damage
@@ -554,6 +566,8 @@ namespace Dnd
         uint32 defId = 0;
         std::string name;
         uint32 mapId = 0, instanceId = 0;
+        bool brawl = false;                  // a tavern brawl: nobody dies - 0 HP is out cold (DndTavern.cpp starts them)
+        ObjectGuid brawlPlayer;              // who it started with (the stakes are theirs)
         int party = 1;                       // players in the fight: the creatures scale with it (ScaleForParty)
         int extras = 0;                      // creatures brought in for the party so far
         bool legendaryHelp = false;          // a lone creature fights the party with legendary actions

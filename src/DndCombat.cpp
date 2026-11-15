@@ -28,6 +28,30 @@ namespace Dnd
     static std::unordered_map<ObjectGuid, uint32> sUnitEncounter;
     static std::unordered_map<ObjectGuid, uint32> sLastJoinCheck;
     static uint32 sNextEncounterId = 1;
+    static std::unordered_map<ObjectGuid, uint32> sBrawlers;       // a villager in a brawl -> their own max health
+    uint32 const BRAWLER_HP = 16;
+
+    bool IsBrawler(ObjectGuid g) { return sBrawlers.count(g) != 0; }
+
+    // a villager squaring up: a commoner who's been in a few of these
+    CreatureStats const& BrawlerStats()
+    {
+        static CreatureStats st = []
+        {
+            CreatureStats b;
+            b.ac = 11;
+            b.hp = int(BRAWLER_HP);
+            b.speed = 9.f;
+            b.abil = { { 14, 12, 14, 10, 10, 10 } };
+            b.melee.name = "Fists";
+            b.melee.bonus = 4;
+            b.melee.dice = Dice::Parse("1d4+2");
+            b.melee.type = DMG_BLUDGEONING;
+            b.xp = 0;
+            return b;
+        }();
+        return st;
+    }
     static constexpr uint32 MOVE_POINT_ID = 0xD0D;
 
     static uint32 Now() { return GameTime::GetGameTimeMS().count(); }
@@ -804,8 +828,47 @@ namespace Dnd
         e.phase = Encounter::PHASE_DONE;
     }
 
+    static void BrawlOver(Encounter& e, bool won)
+    {
+        Broadcast(e, won ? "|cff40ff40=== The brawl is over - you're the one still standing ===|r"
+                         : "|cffff8060=== The brawl is over - you're out cold on the floorboards ===|r");
+        Banner(e, won ? "LAST ONE STANDING" : "OUT COLD");
+        Player* starter = ObjectAccessor::FindPlayer(e.brawlPlayer);
+        Creature* host = nullptr;
+        for (Combatant& c : e.order)
+        {
+            Unit* u = c.gone ? nullptr : e.GetUnit(c);
+            if (!u || !u->IsAlive())
+                continue;
+            if (Creature* cr = u->ToCreature())
+            {
+                if (auto itr = sBrawlers.find(cr->GetGUID()); itr != sBrawlers.end())
+                {
+                    cr->SetMaxHealth(itr->second);
+                    sBrawlers.erase(itr);
+                }
+                c.baseHp = 0;                        // (Cleanup would put the brawl's hit points back)
+                cr->SetFullHealth();
+                cr->RestoreFaction();
+                cr->AttackStop();
+                cr->GetMotionMaster()->Clear();
+                Position home = cr->GetHomePosition();
+                cr->GetMotionMaster()->MovePoint(0, home.GetPositionX(), home.GetPositionY(), home.GetPositionZ(), FORCED_MOVEMENT_WALK);
+                if (!host)
+                    host = cr;
+            }
+            else
+                u->SetStandState(UNIT_STAND_STATE_STAND);
+        }
+        Cleanup(e);
+        if (starter)
+            TavernBrawlOver(starter, host, won);
+    }
+
     static void Victory(Encounter& e)
     {
+        if (e.brawl)
+            return BrawlOver(e, true);
         uint32 xp = 0;
         std::vector<Player*> players;
         for (Combatant& c : e.order)
@@ -888,6 +951,8 @@ namespace Dnd
     // as they were; escaped / leftForDead only reset the creatures - the downed stay down, the dead stay dead
     static void Defeat(Encounter& e, bool escaped = false, bool leftForDead = false)
     {
+        if (e.brawl)
+            return BrawlOver(e, false);
         std::vector<ObjectGuid> party;
         if (!escaped && !leftForDead)
             for (Combatant const& c : e.order)
@@ -1693,6 +1758,57 @@ namespace Dnd
         e->timer = 400;
         if (Player* p = u->ToPlayer())
             PushEconomy(p);
+    }
+
+    // a brawler at 1 HP: out cold, out of the fight (turns, targets and the end check all pass over the fallen)
+    void BrawlKnockOut(Unit* u)
+    {
+        Encounter* e = EncounterOf(u->GetGUID());
+        if (!e || !e->brawl)
+            return;
+        Combatant* c = e->Find(u->GetGUID());
+        if (!c || !c->alive)
+            return;
+        if (c->player)
+            EndConcentration(u, " - they're out cold");
+        c->alive = false;
+        c->prone = false;
+        u->AttackStop();
+        u->SetStandState(UNIT_STAND_STATE_DEAD);
+        Broadcast(*e, Acore::StringFormat("|cffffb040{} goes down in a heap - out cold!|r", c->name));
+        bool wasCurrent = e->Current() == c;
+        if (CheckEnd(*e))
+            return;
+        PushOrder(*e);
+        if (wasCurrent)
+        {
+            e->phase = Encounter::PHASE_NEXT;
+            e->timer = 400;
+        }
+    }
+
+    // a villager squares up to a player: the villager gets a brawler's hit points and fists for the fight
+    bool StartBrawl(Player* p, Creature* npc)
+    {
+        if (!p || !npc || !p->IsAlive() || !npc->IsAlive() || InCombat(p) || InCombat(npc) || IsDowned(p))
+            return false;
+        uint32 own = npc->GetMaxHealth();
+        sBrawlers[npc->GetGUID()] = own;
+        npc->SetMaxHealth(BRAWLER_HP);
+        npc->SetHealth(BRAWLER_HP);
+        StartEncounter(npc, p);
+        Encounter* e = EncounterOf(npc->GetGUID());
+        if (!e)
+        {
+            sBrawlers.erase(npc->GetGUID());
+            npc->SetMaxHealth(own);
+            npc->SetFullHealth();
+            return false;
+        }
+        e->brawl = true;
+        e->brawlPlayer = p->GetGUID();
+        e->name = Acore::StringFormat("a brawl with {}", npc->GetName());
+        return true;
     }
 
     void OnUnitDied(Unit* u)

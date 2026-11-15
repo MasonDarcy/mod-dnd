@@ -13,8 +13,16 @@
  * that villager won't play with you again (until the server restarts). Each villager's purse is finite (per
  * character, per server run), so a winning streak ends with "you've cleaned me out".
  *
- * Addon messages: GO^name^games^purse^bets (the table opens: what's on offer), GS^... the game's state (below),
- * GX (the table closes). The addon sends tav^play^game^bet, tav^act^action[^arg], tav^leave.
+ * Wagers are any whole number of silver from 1 to MAX_BET (the addon's slider). Money is told the way the bag shows it
+ * - gold, silver, copper - since 1 gp here is a WoW silver.
+ *
+ * Some villagers are hot-headed (fixed per villager): catch one cheating and they swing at you; clean one out (their
+ * purse under a third) and they accuse you - talk them down (Persuasion) or it comes to blows. A brawl is a real fight
+ * where nobody dies (DndCombat.cpp: 0 HP is out cold); win it and a cheat's stake is thrown back at you, lose it and
+ * you wake up lighter.
+ *
+ * Addon messages: GO^name^games^purse^money^inn^maxbet (the table opens: what's on offer), GS^... the game's state
+ * (below), GX (the table closes). The addon sends tav^play^game^bet, tav^act^action[^arg], tav^menu, tav^leave.
  */
 #include "Dnd.h"
 
@@ -32,8 +40,9 @@ namespace Dnd
 {
     namespace
     {
-        uint32 const PURSE = 3000;                       // copper: 30 gp per villager (1 gp = 1 silver here)
-        uint32 const BETS[] = { 100, 500, 1000 };        // 1, 5, 10 gp
+        uint32 const PURSE = 6000;                       // copper: 60 silver per villager (1 gp = 1 silver here)
+        uint32 const MIN_BET = 100, MAX_BET = 2500, BET_STEP = 100;    // a wager: 1 to 25 silver, in whole silvers
+        int sTestTemper = -1;                            // (the self-test's: every host calm / hot-headed)
         char const* const DRINKS[] = { "Thunder Ale", "Dark Stout", "Dwarven Whiskey", "Moonshine", "Moonshine" };
 
         struct Table
@@ -48,6 +57,12 @@ namespace Dnd
             uint32 bet = 0;
             std::string phase;                           // "" no game yet, "yours" your move, "done"
             bool cheated = false;
+            bool hot = false;                            // a hot-headed host: a caught cheat, or a cleaning-out, means a fight
+            bool wager = false;                          // an encounter's wager (OpenWager): one hand, then the talk goes on
+            bool caught = false;                         // (a wager) caught cheating: it comes to a fight, them first
+            uint32 wagerIn = 0;
+            int brawl = 0;                               // a brawl coming (BRAWL_*), once the hand's words have landed
+            uint32 brawlStake = 0, brawlIn = 0;
             std::string note;                            // the last line of narration
             int result = 2;                              // 1 won, 0 push, -1 lost, 2 still playing
             // dice
@@ -62,20 +77,47 @@ namespace Dnd
         std::unordered_map<ObjectGuid, Table> sTables;
         std::map<std::pair<ObjectGuid, uint32>, uint32> sSpent;       // (player, spawn) -> copper won off that villager
         std::set<std::pair<ObjectGuid, uint32>> sBanned;              // caught cheating
+        std::set<std::pair<ObjectGuid, uint32>> sAccused;             // a sore loser has had their say (once)
+        enum { BRAWL_NONE, BRAWL_CHEAT, BRAWL_SORE };
+        struct Brawl { int why = 0; uint32 stake = 0, spawn = 0; std::string host; };
+        std::unordered_map<ObjectGuid, Brawl> sBrawls;                // a player in a tavern brawl: what rides on it
+
+        // a villager's temper, fixed for that villager: about a third of them have a short fuse
+        bool HotHeaded(uint32 spawn)
+        {
+            if (sTestTemper >= 0)
+                return sTestTemper == 1;
+            return (spawn * 2654435761u >> 13) % 3 == 0;
+        }
 
         uint32 PurseLeft(Player* p, Table const& t)
         {
+            if (t.wager)
+                return 1000000;                          // (what they stake is the encounter itself)
             auto itr = sSpent.find({ p->GetGUID(), t.spawn });
             uint32 spent = itr == sSpent.end() ? 0 : itr->second;
             return spent >= PURSE ? 0 : PURSE - spent;
         }
 
-        std::string Money(uint32 c) { return c % 100 ? Acore::StringFormat("{}.{:02} gp", c / 100, c % 100) : Acore::StringFormat("{} gp", c / 100); }
+        // money as the bag shows it: "1 gold 20 silver", "5 silver", "50 copper"
+        std::string Money(uint32 c)
+        {
+            std::string out;
+            auto add = [&out](uint32 n, char const* what)
+            {
+                if (n)
+                    out += (out.empty() ? "" : " ") + std::to_string(n) + " " + what;
+            };
+            add(c / 10000, "gold");
+            add(c / 100 % 100, "silver");
+            add(c % 100, "copper");
+            return out.empty() ? "nothing" : out;
+        }
 
         Creature* NpcOf(Player* p, Table const& t)
         {
             Creature* c = ObjectAccessor::GetCreature(*p, t.npc);
-            return c && c->IsAlive() && c->GetExactDist(p) <= 12.f ? c : nullptr;
+            return c && c->IsAlive() && c->GetExactDist(p) <= (t.wager ? 30.f : 12.f) ? c : nullptr;
         }
 
         // ---------------------------------------------------------------- dice
@@ -162,8 +204,8 @@ namespace Dnd
         void Menu(Player* p, Table& t)
         {
             bool banned = sBanned.count({ p->GetGUID(), t.spawn }) != 0;
-            ToTable(p, t, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t),
-                p->GetMoney(), t.inn ? 1 : 0));
+            ToTable(p, t, Acore::StringFormat("GO^{}^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t),
+                p->GetMoney(), t.inn ? 1 : 0, std::min(MAX_BET, PurseLeft(p, t))));
         }
 
         // the wager settles: +1 win, 0 push, -1 loss; mult = what a win pays (1, or 1.5 for a natural 21)
@@ -177,6 +219,24 @@ namespace Dnd
                 p->ModifyMoney(int32(t.bet + won));      // the stake back, and the winnings
                 sSpent[{ p->GetGUID(), t.spawn }] += won;
                 Log(p, Acore::StringFormat("|cff80ff80You win {}.|r", Money(won)));
+                // a hot head cleaned out (their purse under a third) has something to say about your luck, once
+                if (t.hot && !t.cheated && PurseLeft(p, t) < PURSE / 3 && sAccused.insert({ p->GetGUID(), t.spawn }).second)
+                {
+                    int bonus = SkillBonusByName(p, "Persuasion");
+                    D20Result r = RollD20(bonus, 0);
+                    bool ok = r.natural == 20 || (r.natural != 1 && r.total >= 13);
+                    ToTable(p, t, Acore::StringFormat("TD^Persuasion^{}^{}^{}^{}", r.natural, bonus, 13, ok ? 1 : 0));
+                    Log(p, Acore::StringFormat("|cffffd100{}:|r \"Nobody's that lucky.\" Persuasion DC 13: {} - {}", t.name, r.text,
+                        ok ? "|cff40ff40they back down|r" : "|cffff4040it comes to blows|r"));
+                    if (ok)
+                        t.note += Acore::StringFormat(" {} glares, mutters, and pays up.", t.name);
+                    else
+                    {
+                        t.note += Acore::StringFormat(" \"Nobody's that lucky.\" {} kicks back their chair.", t.name);
+                        t.brawl = BRAWL_SORE;
+                        t.brawlStake = won;
+                    }
+                }
             }
             else if (outcome == 0)
             {
@@ -206,8 +266,21 @@ namespace Dnd
             Log(p, Acore::StringFormat("   Sleight of Hand ({}), DC {}: {} - {}", what, dc, r.text, ok ? "|cff40ff40unseen|r" : "|cffff4040CAUGHT|r"));
             if (ok)
                 return true;
+            if (t.wager)
+            {
+                t.caught = true;
+                t.note = Acore::StringFormat("{} catches you at it. A hand goes to a hilt.", t.name);
+                Settle(p, t, -1);
+                return false;
+            }
             sBanned.insert({ p->GetGUID(), t.spawn });
-            t.note = Acore::StringFormat("{} catches you at it! \"Get out of my sight, cheat.\"", t.name);
+            t.note = t.hot ? Acore::StringFormat("{} catches you at it - and comes round the table swinging!", t.name)
+                           : Acore::StringFormat("{} catches you at it! \"Get out of my sight, cheat.\"", t.name);
+            if (t.hot)
+            {
+                t.brawl = BRAWL_CHEAT;
+                t.brawlStake = t.bet;
+            }
             Settle(p, t, -1);
             return false;
         }
@@ -273,6 +346,87 @@ namespace Dnd
         }
     }
 
+    static void CloseTable(Player* p, Table& t);
+    static void StopWatching(Player* w, bool tell);
+    std::string MoneyText(uint32 copper) { return Money(copper); }
+
+    // a fresh hand: the stake on the table, the first deal (the same table, its host, and whoever is watching)
+    static void Deal(Player* p, Table& t, std::string const& game, uint32 bet)
+    {
+        p->ModifyMoney(-int32(bet));
+        std::string games = t.games;
+        ObjectGuid npc = t.npc;
+        uint32 spawn = t.spawn;
+        std::string name = t.name;
+        bool inn = t.inn, hot = t.hot, wager = t.wager;
+        std::set<ObjectGuid> watchers = t.watchers, offered = t.offered;
+        t = Table();
+        t.npc = npc, t.spawn = spawn, t.name = name, t.games = games, t.inn = inn, t.hot = hot, t.wager = wager;
+        t.watchers = watchers, t.offered = offered;
+        t.game = game;
+        t.bet = bet;
+        t.phase = "yours";
+        Log(p, Acore::StringFormat("|cffffd100You put {} on the table.|r", Money(bet)));
+        if (game == "dice")
+        {
+            for (int i = 0; i < 3; ++i)
+                t.npcDice.push_back(D(6));
+            for (int i = 0; i < 3; ++i)
+                t.myDice.push_back(D(6));
+            t.note = Acore::StringFormat("{} rolls {}. You roll {}.", name, Describe(t.npcDice), Describe(t.myDice));
+        }
+        else if (game == "cards")
+        {
+            t.mine = { Draw(t) };
+            t.dealer = { Draw(t) };
+            t.mine.push_back(Draw(t));
+            t.dealer.push_back(Draw(t));
+            if (Total(t.mine) == 21)
+            {
+                t.note = Total(t.dealer) == 21 ? "Twenty-one each!" : "Twenty-one on the deal!";
+                Settle(p, t, Total(t.dealer) == 21 ? 0 : 1, 1.5f);
+                return;
+            }
+            t.note = "Hit or stand?";
+        }
+        else if (game == "drink")
+        {
+            t.note = Acore::StringFormat("{} slams two mugs of {} down.", name, DRINKS[0]);
+            if (Creature* c = NpcOf(p, t))
+                c->HandleEmoteCommand(EMOTE_ONESHOT_CHEER);
+        }
+        Push(p, t);
+    }
+
+    // an encounter's wager: straight to the hand, at the stake the talk named (GO's 8th field: a wager - no menu, no
+    // replays; the addon offers "Continue" when it's done)
+    bool OpenWager(Player* p, Creature* npc, std::string const& game, uint32 stake)
+    {
+        if (!p || !npc || (game != "dice" && game != "cards" && game != "drink") || p->GetMoney() < stake)
+            return false;
+        StopWatching(p, true);
+        Table& t = sTables[p->GetGUID()];
+        t = Table();
+        t.npc = npc->GetGUID();
+        t.spawn = 0;
+        t.name = npc->GetName();
+        t.games = game;
+        t.wager = true;
+        npc->SetFacingToObject(p);
+        ToTable(p, t, Acore::StringFormat("GO^{}^{}^{}^{}^0^{}^1", t.name, game, stake, p->GetMoney(), stake));
+        Deal(p, t, game, stake);
+        return true;
+    }
+
+    // the wager's hand is over (or abandoned): the table shuts and the talk takes the result
+    static void EndWager(Player* p, Table& t)
+    {
+        int outcome = t.caught ? -2 : (t.phase == "done" ? t.result : -1);
+        CloseTable(p, t);
+        sTables.erase(p->GetGUID());             // (t is gone)
+        WagerResult(p, outcome);
+    }
+
     // the table opens (from a villager's talk, or a click on one already talked to)
     static void StopWatching(Player* w, bool tell);
 
@@ -300,8 +454,47 @@ namespace Dnd
         t.name = npc->GetName();
         t.games = games;
         t.inn = npc->IsInnkeeper();
+        t.hot = HotHeaded(t.spawn);
         npc->SetFacingToObject(p);
         Menu(p, t);
+    }
+
+    void SetTestTemper(int temper) { sTestTemper = temper; }
+
+    // the brawl is over: what rode on it changes hands
+    void TavernBrawlOver(Player* p, Creature* host, bool won)
+    {
+        auto itr = sBrawls.find(p->GetGUID());
+        if (itr == sBrawls.end())
+            return;
+        Brawl b = itr->second;
+        sBrawls.erase(itr);
+        if (host)
+            host->HandleEmoteCommand(won ? EMOTE_ONESHOT_BEG : EMOTE_ONESHOT_CHEER);
+        if (won)
+        {
+            if (b.why == BRAWL_CHEAT && b.stake)
+            {
+                p->ModifyMoney(int32(b.stake));
+                Log(p, Acore::StringFormat("|cff80ff80{} picks themself up and throws your {} back at you. \"Keep it. Just go.\"|r",
+                    b.host, Money(b.stake)));
+            }
+            else
+                Log(p, Acore::StringFormat("|cff80ff80{} picks themself up, rubs their jaw, and says no more about luck.|r", b.host));
+            return;
+        }
+        uint32 take = std::min<uint32>(b.stake, p->GetMoney());
+        if (take)
+        {
+            p->ModifyMoney(-int32(take));
+            if (b.why == BRAWL_SORE)                 // what they lost to you goes back in their purse
+            {
+                auto& spent = sSpent[{ p->GetGUID(), b.spawn }];
+                spent -= std::min(spent, take);
+            }
+        }
+        Log(p, take ? Acore::StringFormat("|cffff8080You come to with a sore head - and {} lighter. {} is drinking with it.|r", Money(take), b.host)
+                    : Acore::StringFormat("|cffff8080You come to with a sore head. {} is still laughing.|r", b.host));
     }
 
     // ---------------------------------------------------------------- watching a game
@@ -337,6 +530,31 @@ namespace Dnd
         if (itr == sTables.end())
             return;
         Table& t = itr->second;
+        if (t.wager && t.phase == "done")
+        {
+            t.wagerIn += diff;
+            if (t.wagerIn >= 3500)
+                EndWager(p, t);
+            return;
+        }
+        if (t.brawl)
+        {
+            t.brawlIn += diff;
+            if (t.brawlIn < 1500)
+                return;
+            Creature* npc = NpcOf(p, t);
+            Brawl b{ t.brawl, t.brawlStake, t.spawn, t.name };
+            CloseTable(p, t);
+            sTables.erase(itr);                  // (t is gone)
+            if (npc)
+            {
+                sBrawls[p->GetGUID()] = b;
+                npc->HandleEmoteCommand(EMOTE_ONESHOT_ROAR);
+                if (!StartBrawl(p, npc))
+                    sBrawls.erase(p->GetGUID());
+            }
+            return;
+        }
         t.scanTimer += diff;
         if (t.scanTimer < 500)
             return;
@@ -388,7 +606,8 @@ namespace Dnd
         Send(w, "DLGX^" + name);
         Send(w, "GV^" + name);
         bool banned = sBanned.count({ p->GetGUID(), t.spawn }) != 0;
-        Send(w, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney(), 0));
+        Send(w, Acore::StringFormat("GO^{}^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney(), 0,
+            std::min(MAX_BET, PurseLeft(p, t))));
         if (!t.game.empty() && !t.phase.empty())
         {
             std::set<ObjectGuid> only = { w->GetGUID() };
@@ -420,8 +639,20 @@ namespace Dnd
         }
         if (f.empty())
             return;
+        if (f[0] == "leave" && t.wager)
+        {
+            if (t.phase == "yours")              // walking away mid-hand: it's lost
+            {
+                t.note = "You push your cards away.";
+                Settle(p, t, -1);
+            }
+            EndWager(p, t);
+            return;
+        }
         if (f[0] == "leave")
         {
+            if (t.brawl)                         // (too late to walk away: they're coming round the table)
+                return;
             if (t.phase == "yours")              // walking away mid-hand forfeits it
                 Settle(p, t, -1);
             CloseTable(p, t);
@@ -431,8 +662,24 @@ namespace Dnd
         if (!NpcOf(p, t) || InCombat(p))
         {
             Error(p, "You're not at the table any more.");
+            if (t.wager)
+            {
+                if (t.phase == "yours")
+                    Settle(p, t, -1);
+                EndWager(p, t);
+                return;
+            }
             CloseTable(p, t);
             sTables.erase(itr);
+            return;
+        }
+        if (t.wager && f[0] != "act")
+            return;                              // (a wager is one hand: no menu, no replays, no inn)
+        if (t.brawl)                             // (it's coming to blows: the table is done)
+            return;
+        if (f[0] == "menu" && t.phase != "yours")
+        {
+            Menu(p, t);
             return;
         }
         if (f[0] == "home" && t.inn)
@@ -445,8 +692,8 @@ namespace Dnd
         {
             std::string game = f[1];
             uint32 bet = uint32(std::atoi(f[2].c_str()));
-            if (sBanned.count({ p->GetGUID(), t.spawn }) || t.games.find(game) == std::string::npos ||
-                std::find(std::begin(BETS), std::end(BETS), bet) == std::end(BETS))
+            if (sBanned.count({ p->GetGUID(), t.spawn }) || t.games.find(game) == std::string::npos || bet < MIN_BET ||
+                bet > MAX_BET || bet % BET_STEP)
                 return;
             float pays = game == "cards" ? 1.5f : 1.f;
             if (p->GetMoney() < bet)
@@ -460,49 +707,7 @@ namespace Dnd
                 Menu(p, t);
                 return;
             }
-            p->ModifyMoney(-int32(bet));
-            std::string games = t.games;
-            ObjectGuid npc = t.npc;
-            uint32 spawn = t.spawn;
-            std::string name = t.name;
-            bool inn = t.inn;
-            std::set<ObjectGuid> watchers = t.watchers, offered = t.offered;
-            t = Table();                         // a fresh hand - the same table, its host, and whoever is watching
-            t.npc = npc, t.spawn = spawn, t.name = name, t.games = games, t.inn = inn;
-            t.watchers = watchers, t.offered = offered;
-            t.game = game;
-            t.bet = bet;
-            t.phase = "yours";
-            Log(p, Acore::StringFormat("|cffffd100You put {} on the table.|r", Money(bet)));
-            if (game == "dice")
-            {
-                for (int i = 0; i < 3; ++i)
-                    t.npcDice.push_back(D(6));
-                for (int i = 0; i < 3; ++i)
-                    t.myDice.push_back(D(6));
-                t.note = Acore::StringFormat("{} rolls {}. You roll {}.", name, Describe(t.npcDice), Describe(t.myDice));
-            }
-            else if (game == "cards")
-            {
-                t.mine = { Draw(t) };
-                t.dealer = { Draw(t) };
-                t.mine.push_back(Draw(t));
-                t.dealer.push_back(Draw(t));
-                if (Total(t.mine) == 21)
-                {
-                    t.note = Total(t.dealer) == 21 ? "Twenty-one each!" : "Twenty-one on the deal!";
-                    Settle(p, t, Total(t.dealer) == 21 ? 0 : 1, 1.5f);
-                    return;
-                }
-                t.note = "Hit or stand?";
-            }
-            else if (game == "drink")
-            {
-                t.note = Acore::StringFormat("{} slams two mugs of {} on the bar.", name, DRINKS[0]);
-                if (Creature* c = NpcOf(p, t))
-                    c->HandleEmoteCommand(EMOTE_ONESHOT_CHEER);
-            }
-            Push(p, t);
+            Deal(p, t, game, bet);
             return;
         }
         if (f[0] != "act" || f.size() < 2 || t.phase != "yours")
@@ -587,6 +792,7 @@ namespace Dnd
 
     void ForgetTavern(ObjectGuid guid)
     {
+        sBrawls.erase(guid);
         if (auto itr = sTables.find(guid); itr != sTables.end())
             if (Player* p = ObjectAccessor::FindPlayer(guid))
                 CloseTable(p, itr->second);
@@ -603,5 +809,7 @@ namespace Dnd
             itr = itr->first.first == p->GetGUID() ? sSpent.erase(itr) : std::next(itr);
         for (auto itr = sBanned.begin(); itr != sBanned.end();)
             itr = itr->first == p->GetGUID() ? sBanned.erase(itr) : std::next(itr);
+        for (auto itr = sAccused.begin(); itr != sAccused.end();)
+            itr = itr->first == p->GetGUID() ? sAccused.erase(itr) : std::next(itr);
     }
 }
