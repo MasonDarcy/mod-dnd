@@ -4188,6 +4188,62 @@ namespace
                 CheckEq(c, double(distinct.size()), double(firstOf.size()), "and no two open with the same check");
             });
         });
+        add("town.every_ironforge_villager_has_their_own_talk", [=](Script& s)
+        {
+            // Ironforge: everyone left in the city has a talk of their own (villagers_ironforge.py), its fourteen gate
+            // wardens share eight between them (a pool), and a banker offers the vault - the talk is their gossip menu,
+            // so without that option nobody could reach their bank
+            BotOpt o{ FIGHTER, 3, "", { "style:Defense" } };
+            o.at = true;
+            o.map = 0;
+            o.x = -4900.0f;
+            o.y = -1000.0f;
+            o.z = 502.f;
+            AddBot(s, o);
+            s.Wait(2000);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::vector<Creature*> city;
+                for (auto const& [spawn, k] : p->GetMap()->GetCreatureBySpawnIdStore())
+                    if (k->IsInWorld() && k->GetPositionX() > -5080.f && k->GetPositionX() < -4550.f && k->GetPositionY() > -1330.f &&
+                        k->GetPositionY() < -845.f && IsTownsfolk(k))
+                        city.push_back(k);
+                int own = 0;
+                std::set<std::string> guardTalks;
+                Creature* banker = nullptr;
+                for (Creature* k : city)
+                {
+                    std::string role = TownRoleName(k);
+                    if (role.find('#') != std::string::npos)
+                        ++own;
+                    if (k->IsBanker() && !banker)
+                        banker = k;
+                    if (k->GetName() == "Ironforge Guard")
+                    {
+                        ClearMsgs();
+                        if (StartTownTalk(p, k) && InDialogue(p))
+                        {
+                            std::vector<std::string> opts = MsgsBy(p, "DO^");
+                            if (!opts.empty())
+                                guardTalks.insert(opts.front());
+                            CloseDialogue(p, false);
+                        }
+                    }
+                }
+                Check(c, city.size() >= 30, Acore::StringFormat("Ironforge's villagers are found ({})", city.size()));
+                CheckEq(c, double(own), double(city.size()), "every one of them has a talk of their own, or a pool's");
+                Check(c, guardTalks.size() >= 6, Acore::StringFormat("the gate wardens vary ({} talks)", guardTalks.size()));
+                Check(c, banker != nullptr, "a banker in the city");
+                if (!banker)
+                    return;
+                ClearMsgs();
+                Check(c, StartTownTalk(p, banker), "the banker's talk opens");
+                Check(c, SawBy(p, "^(Open your vault.)"), "and offers the vault");
+                HandleClientMessage(p, "say^95");
+                Check(c, !InDialogue(p), "picking it closes the talk (and opens the bank)");
+            });
+        });
         add("town.an_innkeeper_makes_their_inn_your_home", [=](Script& s)
         {
             // Innkeeper Belm in Kharanos: the talk offers "(Make this inn your home.)"; picking it binds the hearthstone

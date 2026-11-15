@@ -35,7 +35,8 @@ namespace Dnd
     static uint32 const TRADE_OPTION = 99;   // a villager who sells things: "(Browse their wares.)" opens the shop
     static uint32 const GAME_OPTION = 98;    // a villager with tavern games: the table opens (DndTavern.cpp)
     static uint32 const TAXI_OPTION = 97;
-    static uint32 const HOME_OPTION = 96;    // an innkeeper: "(Make this inn your home.)" sets the hearthstone (MakeHome)    // a gryphon master: "(Fly somewhere.)" learns the flight point, opens the map
+    static uint32 const HOME_OPTION = 96;
+    static uint32 const BANK_OPTION = 95;    // a banker: "(Open your vault.)" opens the bank (their gossip menu is the talk)    // an innkeeper: "(Make this inn your home.)" sets the hearthstone (MakeHome)    // a gryphon master: "(Fly somewhere.)" learns the flight point, opens the map
     static std::string TownGames(int role);  // (townsfolk section, below)
     static uint32 const HOSTILE_FACTION = 14;
 
@@ -721,6 +722,8 @@ namespace Dnd
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Fly somewhere.)", TAXI_OPTION));
         if (t.townSpawn && speaker->IsInnkeeper())
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Make this inn your home.)", HOME_OPTION));
+        if (t.townSpawn && speaker->IsBanker())
+            Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Open your vault.)", BANK_OPTION));
         if (t.townSpawn && !TownGames(t.townRole).empty())
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^{}", GAME_OPTION, TownGames(t.townRole) == "drink" ?
                 "(Challenge them to a drinking contest.)" : "(Sit down for a game of chance.)"));
@@ -998,6 +1001,12 @@ namespace Dnd
             CloseDialogue(p, true, 0);       // the talk waits; the flight map opens (and a new flight point is learned)
             p->GetSession()->SendLearnNewTaxiNode(speaker);
             p->GetSession()->SendTaxiMenu(speaker);
+            return;
+        }
+        if (town && idx == BANK_OPTION && speaker->IsBanker())
+        {
+            CloseDialogue(p, true, 0);       // the talk waits; the vault opens
+            p->GetSession()->SendShowBank(speaker->GetGUID());
             return;
         }
         if (town && idx == HOME_OPTION && speaker->IsInnkeeper())
@@ -1298,6 +1307,8 @@ namespace Dnd
                 OpenTavern(p, c, r.games);   // already talked: straight to the table (an innkeeper's has "make it home")
             else if (c->IsInnkeeper())
                 MakeHome(p, c);
+            else if (c->IsBanker())
+                p->GetSession()->SendShowBank(c->GetGUID());   // already talked: straight to the vault
             else if (c->IsVendor())
                 p->GetSession()->SendListInventory(c->GetGUID());
             return true;
