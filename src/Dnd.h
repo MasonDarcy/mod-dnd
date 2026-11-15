@@ -374,6 +374,7 @@ namespace Dnd
     void PullGroupIntoFight(Creature* c, Player* p);     // a group caught by your spell mid-fight joins it (DndCombat.cpp)
     void DialogueChoose(Player* p, uint32 idx);
     void DialogueHover(Player* p, uint32 idx);   // the talker's mouse over an option: onlookers see it (DH^idx)
+    void ListenIn(Player* p, std::string const& talker);   // "Listen in": watch a nearby player's villager chat
     void CloseDialogue(Player* p, bool leave, uint32 cooldownMs = 45000);
     int SkillBonusByName(Player* p, std::string const& skill);
     bool MeetsRequirement(Player* p, std::string const& req);

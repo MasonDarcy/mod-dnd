@@ -76,6 +76,7 @@ namespace Dnd
         bool secured = false;                // offered a no-roll way out to PEACE: later failures don't start fights
         uint32 townSpawn = 0;                // a villager's chat (no encounter): PEACE pays their gift, SOUR closes it
         int townRole = -1;
+        std::set<ObjectGuid> offered;        // a villager's chat: who nearby has been offered "Listen in" (DL / DLX)
     };
 
     static std::unordered_map<uint32, DialogueNode> sNodes;
@@ -735,23 +736,69 @@ namespace Dnd
         auto itr = sNodes.find(t.node);
         Creature* speaker = SpeakerOf(talker, t);
         EncounterDef const* def = GetEncounterDef(t.encounterId);
-        if (itr == sNodes.end() || !speaker || !def)
+        if (itr == sNodes.end() || !speaker || (!def && !t.townSpawn))
             return;
         sWatch[w->GetGUID()] = talker->GetGUID();
         DialogueNode const& n = itr->second;
-        std::string voiceName = n.actor == 0 ? def->name : Member(talker, *def, n.actor, speaker)->GetName();
+        // (a villager's chat, listened in on: the villager is the voice, and the whole scene)
+        std::string voiceName = !def ? std::string(speaker->GetName()) :
+            (n.actor == 0 ? def->name : Member(talker, *def, n.actor, speaker)->GetName());
         Send(w, "DW^" + std::string(talker->GetName()));
-        Log(w, Acore::StringFormat("|cffc0c0ff--- {} talks: {} ---|r", talker->GetName(), def->name));
+        Log(w, Acore::StringFormat("|cffc0c0ff--- {} talks: {} ---|r", talker->GetName(), def ? def->name : speaker->GetName()));
         SendNode(w, talker, t, n, speaker, voiceName, ClassText(talker, n.text, speaker));
     }
 
-    // who is close enough to watch (an encounter's conversation; a villager's chat is private), and who has wandered off
+    // a villager's chat isn't watched by whoever is near - they're offered "Listen in" (a button: no right-click on
+    // the villager, which would start a talk of their own). Offered to whoever comes within range, withdrawn from
+    // whoever walks off, gets busy or starts listening (DL^talker^villager / DLX^talker)
+    static void OfferListen(Player* talker, Talk& t)
+    {
+        Creature* speaker = SpeakerOf(talker, t);
+        std::string who = talker->GetName();
+        for (auto itr = t.offered.begin(); itr != t.offered.end();)
+        {
+            Player* pl = ObjectAccessor::FindPlayer(*itr);
+            bool keep = pl && pl->GetMap() == talker->GetMap() && pl->IsAlive() && !InCombat(pl) && !InDialogue(pl) &&
+                sWatch.count(pl->GetGUID()) == 0 && pl->GetExactDist(talker) <= WATCH_LEAVE;
+            if (!keep && pl)
+                Send(pl, "DLX^" + who);
+            itr = keep ? std::next(itr) : t.offered.erase(itr);
+        }
+        if (!speaker)
+            return;
+        std::string offer = "DL^" + who + "^" + speaker->GetName();
+        talker->GetMap()->DoForAllPlayers([&](Player* pl)
+        {
+            if (pl != talker && !t.offered.count(pl->GetGUID()) && pl->IsAlive() && !InCombat(pl) && !InDialogue(pl) &&
+                sWatch.count(pl->GetGUID()) == 0 && pl->GetExactDist(talker) <= WATCH_RANGE)
+            {
+                t.offered.insert(pl->GetGUID());
+                Send(pl, offer);
+            }
+        });
+    }
+
+    static void WithdrawListen(Player* talker, Talk& t)
+    {
+        for (ObjectGuid g : t.offered)
+            if (Player* pl = ObjectAccessor::FindPlayer(g))
+                Send(pl, "DLX^" + std::string(talker->GetName()));
+        t.offered.clear();
+    }
+
+    // who is close enough to watch (an encounter's conversation; a villager's chat: offered, see above), and who has
+    // wandered off
     static void WatchScan(Player* talker, Talk& t)
     {
         for (Player* w : Watchers(talker))
             if (!w->IsAlive() || InCombat(w) || InDialogue(w) || w->GetMap() != talker->GetMap() || w->GetExactDist(talker) > WATCH_LEAVE)
                 Unwatch(w, false);
-        if (t.townSpawn || !t.encounterId)
+        if (t.townSpawn)
+        {
+            OfferListen(talker, t);
+            return;
+        }
+        if (!t.encounterId)
             return;
         std::vector<Player*> fresh;
         talker->GetMap()->DoForAllPlayers([&](Player* pl)
@@ -896,6 +943,7 @@ namespace Dnd
             return;
         }
         SettleTownTalk(p, itr->second);      // (however it closes: Escape, walking off, logging out; TownResult pays once)
+        WithdrawListen(p, itr->second);
         for (Player* w : Watchers(p))
             Unwatch(w, false);
         for (auto d = sWatchDeclined.begin(); d != sWatchDeclined.end();)
@@ -1268,7 +1316,30 @@ namespace Dnd
         Send(p, "DC");
         Log(p, Acore::StringFormat("|cffc0c0ff--- {} ---|r", c->GetName()));
         ShowNode(p, t);
+        if (auto again = sTalks.find(p->GetGUID()); again != sTalks.end())
+            OfferListen(p, again->second);   // whoever is standing by can listen in, from the first line
         return true;
+    }
+
+    // "Listen in" pressed: watch talker's villager chat (read-only, as an encounter's onlookers do)
+    void ListenIn(Player* p, std::string const& talkerName)
+    {
+        Player* talker = ObjectAccessor::FindPlayerByName(talkerName, false);
+        auto itr = talker ? sTalks.find(talker->GetGUID()) : sTalks.end();
+        if (itr == sTalks.end() || !itr->second.townSpawn || talker == p)
+        {
+            Send(p, "DLX^" + talkerName);
+            return;
+        }
+        if (InDialogue(p) || InCombat(p) || !p->IsAlive() || talker->GetMap() != p->GetMap() || p->GetExactDist(talker) > WATCH_LEAVE)
+        {
+            Error(p, "You're too far away, or too busy, to listen in.");
+            return;
+        }
+        itr->second.offered.erase(p->GetGUID());
+        Send(p, "DLX^" + talkerName);
+        sWatchDeclined.erase({ p->GetGUID(), talker->GetGUID() });
+        Watch(p, talker, itr->second);
     }
 
     static std::string Coins(uint32 m)

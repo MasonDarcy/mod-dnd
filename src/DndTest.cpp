@@ -4209,6 +4209,50 @@ namespace
                 HandleClientMessage(p, "tav^leave");
             });
         });
+        add("multi.listen_in_on_a_villager_chat", [=](Script& s)
+        {
+            // Grundel Harkin's forge: the fighter talks to him; the wizard beside them is offered "Listen in" (DL), not
+            // pulled in; pressing it watches the talk read-only (DW, the line, the pick); the talk ending closes it and
+            // withdraws the offer. A rogue 60 m off is never offered
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -6102.5f;
+            o.y = 384.f;
+            o.z = 395.6f;
+            AddBot(s, o);
+            s.Wait(1500);
+            Act(s, [](Ctx& c)
+            {
+                Player* a = Bot(c);
+                Player* b = AddBotAt(c, WIZ, 1, a->GetPositionX() + 2.f, a->GetPositionY() + 1.f);
+                Player* away = AddBotAt(c, ROGUE, 1, a->GetPositionX() - 60.f, a->GetPositionY());
+                std::list<Creature*> found;
+                a->GetCreatureListWithEntryInGrid(found, 1104, 30.f);
+                Check(c, !found.empty(), "the smith is at his forge");
+                if (found.empty())
+                    return;
+                ClearMsgs();
+                Check(c, StartTownTalk(a, found.front()), "the fighter's talk opens");
+                Check(c, GotExact(b, "DL^Jigfighter^Grundel Harkin"), "the wizard beside them is offered it");
+                Check(c, WatchedTalker(b).IsEmpty() && MsgsBy(b, "DW^").empty(), "but isn't pulled in");
+                Check(c, MsgsBy(away, "DL^").empty(), "the rogue 60 m off isn't offered");
+                ClearMsgs();
+                HandleClientMessage(b, "listen^Jigfighter");
+                Check(c, WatchedTalker(b) == a->GetGUID(), "pressing Listen in watches the fighter's talk");
+                Check(c, SawBy(b, "DW^Jigfighter") && !MsgsBy(b, "DT^").empty(), "on their own panel, with the line");
+                Check(c, GotExact(b, "DLX^Jigfighter"), "the offer goes once they're listening");
+                Check(c, !InDialogue(b), "and it's not a talk of their own");
+                int idx = -1;
+                for (std::string const& m : MsgsBy(a, "DO^"))
+                    if (idx < 0)
+                        idx = std::atoi(Split(m, '^')[1].c_str());
+                ClearMsgs();
+                HandleClientMessage(a, "bye");
+                Check(c, GotExact(b, "DX"), "the talk ending closes the listener's panel");
+                Check(c, WatchedTalker(b).IsEmpty(), "and they're no longer listening");
+            });
+        });
         add("town.a_lost_talk_stays_lost_when_closed", [=](Script& s)
         {
             // Grundel Harkin, Anvilmar's smith: a check failed, the panel shut on the losing line (Escape) instead of
