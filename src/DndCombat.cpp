@@ -5,6 +5,7 @@
  * MapUpdate.Threads = 1 the world thread waits for map updates, so nothing here runs concurrently.
  */
 #include "Dnd.h"
+#include "SpellMgr.h"
 
 #include "Bag.h"
 #include "Config.h"
@@ -219,6 +220,39 @@ namespace Dnd
             c->reactionUsed ? 0 : 1, c->moved, c->moveMax));
     }
 
+    // a combatant's conditions, for the turn order's portraits ("Held,Asleep,...")
+    static std::string Conditions(Combatant const& c)
+    {
+        std::string out;
+        auto add = [&out](bool on, char const* tag)
+        {
+            if (on)
+                out += (out.empty() ? "" : ",") + std::string(tag);
+        };
+        add(c.held || c.lairHeld, "Held");
+        add(c.asleep, "Asleep");
+        add(c.stunned > 0, "Stunned");
+        add(c.restrained, "Restrained");
+        add(c.entranced, "Entranced");
+        add(c.turned, "Turned");
+        add(c.afraid || c.frightened, "Frightened");
+        add(c.poisoned > 0, "Poisoned");
+        add(!c.burningBy.IsEmpty(), "Burning");
+        add(c.corroded > 0, "Corroded");
+        add(c.slowed, "Slowed");
+        add(c.outlined, "Outlined");
+        add(c.guided, "Guided");
+        add(c.mocked, "Mocked");
+        add(!c.hexedBy.IsEmpty(), "Hexed");
+        add(c.surprised, "Surprised");
+        add(!c.blessedBy.IsEmpty(), "Blessed");
+        add(!c.faithBy.IsEmpty(), "Shielded");
+        add(c.raging, "Raging");
+        add(c.dodging, "Dodging");
+        add(c.hidden, "Hidden");
+        return out;
+    }
+
     void PushOrder(Encounter& e)
     {
         for (Combatant const& viewer : e.order)
@@ -240,10 +274,16 @@ namespace Dnd
                 bool alive = c.alive && u && u->IsAlive();
                 uint32 kind = (u && u->ToCreature()) ? u->ToCreature()->GetCreatureTemplate()->type : 0;
                 std::string down = !c.downed ? "0" : (c.stable ? "S" : Acore::StringFormat("D{}{}", c.saveOk, c.saveFail));
-                Send(p, Acore::StringFormat("O^{}^{}^{}^{}^{}^{}^{}^{}^{}^{}^0x{:016X}^{}^{}^{}", i, c.name.substr(0, 40), hp, maxHp,
+                Send(p, Acore::StringFormat("O^{}^{}^{}^{}^{}^{}^{}^{}^{}^{}^0x{:016X}^{}^{}^{}^{}", i, c.name.substr(0, 40), hp, maxHp,
                     c.player ? 1 : 0, alive ? 1 : 0, c.initiative, int(i) == e.cur ? 1 : 0, c.guid == viewer.guid ? 1 : 0,
-                    c.prone ? 1 : 0, c.guid.GetRawValue(), kind, ConcentrationLive(e, c) ? 1 : 0, down));
+                    c.prone ? 1 : 0, c.guid.GetRawValue(), kind, ConcentrationLive(e, c) ? 1 : 0, down, Conditions(c)));
             }
+            // what you're concentrating on, by name (the turn panel shows it; empty: nothing)
+            std::string conc;
+            if (viewer.concentration && ConcentrationLive(e, viewer))
+                if (SpellInfo const* si = sSpellMgr->GetSpellInfo(viewer.concentration))
+                    conc = si->SpellName[0];
+            Send(p, "CN^" + conc);
             Send(p, Acore::StringFormat("OE^{}^{}^{}", e.round, e.cur, e.name.substr(0, 60)));
         }
         e.lastOrderPush = Now();
@@ -1812,6 +1852,21 @@ namespace Dnd
         e->brawlPlayer = p->GetGUID();
         e->name = Acore::StringFormat("a brawl with {}", npc->GetName());
         return true;
+    }
+
+    // before the first turn: this player first in the order (the spell jig's fights)
+    void GoFirst(Player* p)
+    {
+        Encounter* e = p ? EncounterOf(p->GetGUID()) : nullptr;
+        Combatant* me = e ? e->Find(p->GetGUID()) : nullptr;
+        if (!me || e->round > 0 || e->cur >= 0)
+            return;
+        int top = 0;
+        for (Combatant const& o : e->order)
+            top = std::max(top, o.initiative);
+        me->initiative = top + 1;
+        SortOrder(*e);
+        PushOrder(*e);
     }
 
     // the fight simply ends (the spell jig starting a fresh one): the creatures reset, nobody goes anywhere

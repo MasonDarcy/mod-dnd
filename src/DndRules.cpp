@@ -906,6 +906,8 @@ namespace Dnd
             if (Combatant* vc = CombatantOf(d.victim->GetGUID()); vc && (vc->entranced || vc->asleep || vc->turned))
             {
                 note += vc->asleep ? " (wakes up)" : (vc->turned ? " (its terror breaks)" : " (snaps out of the pattern)");
+                if (vc->asleep)
+                    d.victim->SetStandState(UNIT_STAND_STATE_STAND);
                 vc->entranced = vc->asleep = vc->turned = false;
                 vc->entrancedBy.Clear();
             }

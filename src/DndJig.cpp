@@ -6,8 +6,9 @@
  * entry on the jig's panel (DnDJig.lua) quietly makes the character a class (and subclass) that has it - the sheet's
  * class, which is what the rules read; the WoW class stays as it is - learns that kit, puts the entry on action button 1,
  * and starts a fresh fight against two sparring partners: an undead and a humanoid (Turn Undead, Holy Water and the
- * Arrow of Slaying need one of each), thousands of hit points, a 1d2 jab - and a frail kobold of 10 hit points for
- * whatever counts or cares about hit points (Sleep, the wounded). Every turn of the player's refills slots and
+ * Arrow of Slaying need one of each), thousands of hit points, a 1d2 jab - and two kobolds of 15 and 30 hit points
+ * for whatever counts or cares about hit points (Sleep, the wounded, a kill). You always go first; you're proficient with
+ * every weapon, and carry a test kit (weapons, bows, a shield) while you're in. Every turn of the player's refills slots and
  * class resources, tops up health and restocks the item under test. Pass / Fail and a note go to logs/dnd_spelljig.tsv,
  * which the panel reads back so it shows what's left to test. Leaving (the panel, or logging out) puts the build, the
  * level, the kit and the action button back and returns the character where they were.
@@ -38,9 +39,13 @@ namespace Dnd
         uint32 const JIG_MAP = 1;                               // Kalimdor: the Shimmering Flats, east of the Mirage Raceway
         float const JIG_X = -5980.f, JIG_Y = -3760.f, JIG_Z = -57.6f;
         uint32 const DUMMY_UNDEAD = 48, DUMMY_HUMANOID = 38;   // a Skeletal Warrior and a Defias Thug, by look and type
-        uint32 const DUMMY_FRAIL = 6;                           // a Kobold Vermin: the one with few hit points (Sleep's pool,
-                                                                // anything that cares how hurt or how small the target is)
-        uint32 const DUMMY_HP = 4000, FRAIL_HP = 10;
+        uint32 const DUMMY_KOBOLD = 6;                          // Kobold Vermin: two of them, with real hit points (Sleep's
+                                                                // pool, anything that cares how hurt the target is, a kill)
+        uint32 const DUMMY_HP = 4000, KOBOLD_HP[] = { 15, 30 };   // (as the fight shows them, after scaling for the party)
+        uint32 const FRAIL_HP = 15;
+        // a test kit, for everything that wants a weapon or a shield in hand: dagger, quarterstaff, handaxe, longsword,
+        // greatsword, shortbow, light crossbow, shield (tools/shops.py)
+        uint32 const KIT[] = { 2139, 35, 2134, 2488, 49778, 2504, 15807, 2362 };
         uint32 const SHORTBOW = 2504;                           // (the arrows want a bow)
         uint32 const ITEM_STACK = 5;
         uint8 const JIG_LEVEL = 6;
@@ -260,10 +265,11 @@ namespace Dnd
             Despawn(j, p);
             float o = p->GetOrientation();
             int i = 0;
-            for (uint32 entry : { DUMMY_UNDEAD, DUMMY_HUMANOID, DUMMY_FRAIL })
+            for (uint32 entry : { DUMMY_UNDEAD, DUMMY_KOBOLD, DUMMY_KOBOLD })
             {
-                float side = i == 0 ? -0.4f : (i == 1 ? 0.4f : 0.f);
-                float dist = i == 2 ? 6.f : 9.f;
+                float side = i == 0 ? 0.f : (i == 1 ? -0.5f : 0.5f);
+                float dist = i == 0 ? 10.f : 7.f;
+                uint32 want = i == 0 ? DUMMY_HP : KOBOLD_HP[i - 1];
                 ++i;
                 float x = p->GetPositionX() + std::cos(o + side) * dist, y = p->GetPositionY() + std::sin(o + side) * dist;
                 float z = p->GetMap()->GetHeight(x, y, p->GetPositionZ() + 5.f);
@@ -273,11 +279,13 @@ namespace Dnd
                 if (!c)
                     continue;
                 sDummies.insert(c->GetGUID());
-                if (entry == DUMMY_FRAIL)
+                if (entry == DUMMY_KOBOLD)
                     sFrail.insert(c->GetGUID());
                 j.dummies.push_back(c->GetGUID());
                 c->SetFaction(14);
-                c->SetMaxHealth(entry == DUMMY_FRAIL ? FRAIL_HP : DUMMY_HP);
+                // the fight scales a group's hit points for the party: aim so that it shows `want`
+                c->SetMaxHealth(entry == DUMMY_KOBOLD ? std::max<uint32>(1, uint32(std::lround(want / PartyHpScale(TunedPartySize(), false))))
+                                                      : DUMMY_HP);
                 c->SetFullHealth();
             }
             if (j.dummies.empty())
@@ -289,6 +297,7 @@ namespace Dnd
             for (std::size_t k = 1; k < j.dummies.size(); ++k)
                 if (Creature* c = ObjectAccessor::GetCreature(*p, j.dummies[k]))
                     AddCreatureToFight(c, p);
+            GoFirst(p);                          // (the jig's fights always open with your turn)
         }
 
         // the character becomes what the entry needs: its class and subclass, at level 6, with that kit
@@ -407,6 +416,8 @@ namespace Dnd
         if (p->GetLevel() != JIG_LEVEL)
             p->GiveLevel(JIG_LEVEL);
         j.entries = BuildEntries(p);
+        for (uint32 item : KIT)
+            Give(p, j, item, 1);
         Log(p, Acore::StringFormat("|cffffd100The spell jig: {} entries to test. Pick one on the panel - you become a class that "
             "has it, and two sparring partners come at you. Everything goes back when you leave.|r", j.entries.size()));
         if (teleport)

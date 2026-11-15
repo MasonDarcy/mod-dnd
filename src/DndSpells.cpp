@@ -1089,7 +1089,7 @@ namespace Dnd
         bool thrown = t->SubClass == ITEM_SUBCLASS_WEAPON_THROWN;
         if (thrown && AbilityMod(p, STR) > AbilityMod(p, DEX))
             w.ability = STR;
-        w.proficient = ClassProficient(GetSheet(p).cls, t->SubClass) || HasFeat(p, "Weapon Master");
+        w.proficient = ClassProficient(GetSheet(p).cls, t->SubClass) || HasFeat(p, "Weapon Master") || InJig(p);
         w.thrown = thrown;
         w.crossbow = t->SubClass == ITEM_SUBCLASS_WEAPON_CROSSBOW;
         return true;
@@ -1673,7 +1673,11 @@ namespace Dnd
         if (spell == SPELL_WITCH_BOLT)
             me->witchTarget.Clear();
         if (live)
+        {
             Narrate(caster, nullptr, Acore::StringFormat("   |cffb48cff{} loses concentration: {} ends{}.|r", me->name, SpellName(spell), why));
+            if (Player* cp = caster->ToPlayer())
+                Send(cp, Acore::StringFormat("CB^{}^{}", SpellName(spell), why));
+        }
         PushOrder(*e);
     }
 
@@ -2514,6 +2518,7 @@ namespace Dnd
                     if (Combatant* uc = CombatantOf(u->GetGUID()))
                     {
                         uc->asleep = true;
+                        u->SetStandState(UNIT_STAND_STATE_SLEEP);
                         Narrate(p, u, Acore::StringFormat("   {} falls |cff9ad0ffasleep|r.", Who(u)));
                     }
                 }

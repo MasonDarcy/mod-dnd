@@ -3567,7 +3567,8 @@ namespace
                 return IsClass(Bot(c), CLASS_DND_DRUID) && Bot(c)->HasSpell(SPELL_MOONBEAM) && ab && ab->GetAction() == SPELL_MOONBEAM &&
                     Saw("JS^");
             });
-            Expect(s, "in a fight with three sparring partners, one of them frail", [](Ctx& c)
+            s.Until([](Ctx& c) { return IsTurnOf(Bot(c)); }, "the jig's fight to open with the bot's turn", 6000);
+            Expect(s, "in a fight with three sparring partners, two of them small", [](Ctx& c)
             {
                 Encounter* e = EncounterOf(Bot(c)->GetGUID());
                 if (!e)
@@ -3580,7 +3581,7 @@ namespace
                         if (Unit* u = e->GetUnit(o); u && u->GetMaxHealth() < 100)
                             ++frail;
                     }
-                return dummies == 3 && frail == 1;
+                return dummies == 3 && frail == 2;
             });
             Act(s, [](Ctx& c) { GetSheet(Bot(c)).slotsUsed[2] = 2; GetSheet(Bot(c)).wildShapeUsed = 2; JigRefill(Bot(c)); });
             Expect(s, "a turn in the jig gives everything back", [](Ctx& c)

@@ -884,7 +884,8 @@ namespace Dnd
     void SetTestStats(CreatureStats const& s);           // DndRules.cpp: test stat blocks, ahead of dnd_creature
     void ClearTestStats();
     bool AddCreatureToFight(Creature* c, Unit* inFightWith);
-    void AbandonFight(Player* p);                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
+    void AbandonFight(Player* p);
+    void GoFirst(Player* p);                     // DndCombat.cpp: before the first turn, this player goes first (the jig)                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
     // the spell jig (DndJig.cpp, `.dnd jig`): every spell, class action and consumable, tested by hand on the Shimmering Flats
     bool InJig(Player* p);
     bool IsJigDummy(ObjectGuid g);
