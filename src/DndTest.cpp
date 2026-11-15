@@ -3183,7 +3183,8 @@ namespace
                 std::string all;
                 for (std::string const& m : sMsgs)
                     all += m + "\n";
-                Check(c, all.find("Mind the forge") != std::string::npos || all.find("Thorium steel") != std::string::npos,
+                // (Burninate has his own talk now - villagers_searinggorge.py - and it is all thorium and the forge)
+                Check(c, all.find("thorium") != std::string::npos && all.find("forge") != std::string::npos,
                     "a Brotherhood smith's greeting");
                 CloseDialogue(p, false);
             });
@@ -4232,6 +4233,100 @@ namespace
                 for (auto const& [who, first] : firstOf)
                     distinct.insert(first);
                 Check(c, talked >= 20, Acore::StringFormat("plenty of villagers in Thelsamar ({})", talked));
+                CheckEq(c, double(own), double(talked), "every one of them has a talk of their own");
+                CheckEq(c, double(distinct.size()), double(firstOf.size()), "and no two open with the same check");
+            });
+        });
+        add("town.every_stormwind_trade_district_villager_has_their_own_talk", [=](Script& s)
+        {
+            // the Trade District: every villager has a conversation of their own (villagers_stormwind.py, keyed "=name") - no two
+            // offer the same opening check, and each is matched by name, not by trade
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -8850.0f;
+            o.y = 650.0f;
+            o.z = 98.0f;
+            AddBot(s, o);
+            s.Wait(2000);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::vector<Creature*> around;
+                for (auto const& [spawn, k] : p->GetMap()->GetCreatureBySpawnIdStore())
+                    if (k->IsInWorld() && k->GetExactDist2d(p) <= 120.f)
+                        around.push_back(k);
+                std::map<std::string, std::string> firstOf;              // villager -> the first option they offer
+                std::set<std::string> roles;
+                int talked = 0, own = 0;
+                for (Creature* k : around)
+                {
+                    if (!IsTownsfolk(k))
+                        continue;
+                    ClearMsgs();
+                    if (!StartTownTalk(p, k) || !InDialogue(p))
+                        continue;
+                    ++talked;
+                    std::string role = TownRoleName(k);
+                    roles.insert(role);
+                    if (role.find('#') != std::string::npos || role.rfind("guard:", 0) == 0)
+                        ++own;                                           // a person's own role, or a named guard's
+                    std::vector<std::string> opts = MsgsBy(p, "DO^");
+                    if (!opts.empty())
+                        firstOf[k->GetName()] = opts.front();
+                    CloseDialogue(p, false);
+                }
+                std::set<std::string> distinct;
+                for (auto const& [who, first] : firstOf)
+                    distinct.insert(first);
+                Check(c, talked >= 15, Acore::StringFormat("plenty of villagers in the Trade District ({})", talked));
+                CheckEq(c, double(own), double(talked), "every one of them has a talk of their own");
+                CheckEq(c, double(distinct.size()), double(firstOf.size()), "and no two open with the same check");
+            });
+        });
+        add("town.every_thorium_point_villager_has_their_own_talk", [=](Script& s)
+        {
+            // Thorium Point: every villager has a conversation of their own (villagers_searinggorge.py, keyed "=name") - no two
+            // offer the same opening check, and each is matched by name, not by trade
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -6510.0f;
+            o.y = -1180.0f;
+            o.z = 0.0f;
+            AddBot(s, o);
+            s.Wait(2000);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::vector<Creature*> around;
+                for (auto const& [spawn, k] : p->GetMap()->GetCreatureBySpawnIdStore())
+                    if (k->IsInWorld() && k->GetExactDist2d(p) <= 120.f)
+                        around.push_back(k);
+                std::map<std::string, std::string> firstOf;              // villager -> the first option they offer
+                std::set<std::string> roles;
+                int talked = 0, own = 0;
+                for (Creature* k : around)
+                {
+                    if (!IsTownsfolk(k))
+                        continue;
+                    ClearMsgs();
+                    if (!StartTownTalk(p, k) || !InDialogue(p))
+                        continue;
+                    ++talked;
+                    std::string role = TownRoleName(k);
+                    roles.insert(role);
+                    if (role.find('#') != std::string::npos || role.rfind("guard:", 0) == 0)
+                        ++own;                                           // a person's own role, or a named guard's
+                    std::vector<std::string> opts = MsgsBy(p, "DO^");
+                    if (!opts.empty())
+                        firstOf[k->GetName()] = opts.front();
+                    CloseDialogue(p, false);
+                }
+                std::set<std::string> distinct;
+                for (auto const& [who, first] : firstOf)
+                    distinct.insert(first);
+                Check(c, talked >= 6, Acore::StringFormat("plenty of villagers in Thorium Point ({})", talked));
                 CheckEq(c, double(own), double(talked), "every one of them has a talk of their own");
                 CheckEq(c, double(distinct.size()), double(firstOf.size()), "and no two open with the same check");
             });
