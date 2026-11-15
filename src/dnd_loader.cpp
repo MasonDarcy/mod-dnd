@@ -283,6 +283,9 @@ struct npc_dnd_combatant : public CreatureAI
         me->SetHealth(s.hp);
         me->SetRegeneratingHealth(false);
         me->SetReactState(REACT_PASSIVE);
+        // town guards and other NPCs leave it alone: a guard used to wade into a fight with white swings the engine
+        // throws away (the D&D rolls never go through WoW's NPC combat, so nothing is lost)
+        me->SetImmuneToNPC(true);
         if (!InCombat(me))
             me->RestoreFaction();            // talkers that were turned hostile come back friendly
     }

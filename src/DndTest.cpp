@@ -4030,6 +4030,15 @@ namespace
             Act(s, [ranged](Ctx& c) { Remember(c); sMsgs.clear(); CreatureAttack(Mob(c), Bot(c), ranged, false); });
         };
 
+        add("rules.guards_leave_encounter_creatures_alone", [=](Script& s)
+        {
+            // an encounter creature is immune to NPCs: a town guard nearby doesn't wade in with white swings
+            AddBot(s, wiz1);
+            AddMob(s, {});
+            Act(s, [](Ctx& c) { Check(c, Mob(c)->IsImmuneToNPC(), "a test creature (the encounter AI) is immune to NPCs"); });
+            StartFight(s);
+            Act(s, [](Ctx& c) { Check(c, Mob(c)->IsImmuneToNPC(), "still, once hostile in a fight"); });
+        });
         add("rules.a_creature_throws_what_its_attack_does", [=](Script& s)
         {
             // nothing in the ranged slot: piercing flies as a spear, slashing as a hand axe, bludgeoning as a rock, cold
