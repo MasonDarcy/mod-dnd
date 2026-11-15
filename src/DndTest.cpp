@@ -4070,6 +4070,47 @@ namespace
                         Acore::StringFormat("no playercreateinfo for race {} class {}", race, cls));
             });
         });
+        add("town.an_innkeeper_makes_their_inn_your_home", [=](Script& s)
+        {
+            // Innkeeper Belm in Kharanos: the talk offers "(Make this inn your home.)"; picking it binds the hearthstone
+            // there (WoW's bind, cast by the innkeeper), and the talk stays open. Already talked: his table offers it
+            BotOpt o{ FIGHTER, 1 };
+            o.at = true;
+            o.map = 0;
+            o.x = -5599.5f;
+            o.y = -531.2f;
+            o.z = 399.7f;
+            AddBot(s, o);
+            s.Wait(1500);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                std::list<Creature*> found;
+                p->GetCreatureListWithEntryInGrid(found, 1247, 30.f);
+                Check(c, !found.empty(), "Belm is at his inn");
+                if (found.empty())
+                    return;
+                Creature* k = found.front();
+                Check(c, k->IsInnkeeper(), "an innkeeper");
+                ClearMsgs();
+                Check(c, StartTownTalk(p, k), "the talk opens");
+                Check(c, SawBy(p, "^(Make this inn your home.)"), "it offers to make the inn home");
+                float before = p->m_homebindX;
+                Check(c, std::fabs(before - k->GetPositionX()) > 50.f, "(the bot's home starts elsewhere)");
+                HandleClientMessage(p, "say^96");
+                Check(c, std::fabs(p->m_homebindX - k->GetPositionX()) < 30.f &&
+                    std::fabs(p->m_homebindY - k->GetPositionY()) < 30.f, "the hearthstone is bound to the inn");
+                Check(c, InDialogue(p), "and the talk goes on");
+                CloseDialogue(p, false);
+                ClearMsgs();
+                OpenTavern(p, k, "dice");
+                bool inn = false;
+                for (std::string const& m : MsgsBy(p, "GO^"))
+                    inn = inn || (m.size() > 2 && m.substr(m.size() - 2) == "^1");
+                Check(c, inn, "his table says it's an inn (the home button)");
+                HandleClientMessage(p, "tav^leave");
+            });
+        });
         add("town.a_lost_talk_stays_lost_when_closed", [=](Script& s)
         {
             // Grundel Harkin, Anvilmar's smith: a check failed, the panel shut on the losing line (Escape) instead of

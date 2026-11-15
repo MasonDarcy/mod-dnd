@@ -34,7 +34,8 @@ namespace Dnd
     static int32 const NEXT_SOUR = -4;       // resolved on a sour note: cleared for half XP
     static uint32 const TRADE_OPTION = 99;   // a villager who sells things: "(Browse their wares.)" opens the shop
     static uint32 const GAME_OPTION = 98;    // a villager with tavern games: the table opens (DndTavern.cpp)
-    static uint32 const TAXI_OPTION = 97;    // a gryphon master: "(Fly somewhere.)" learns the flight point, opens the map
+    static uint32 const TAXI_OPTION = 97;
+    static uint32 const HOME_OPTION = 96;    // an innkeeper: "(Make this inn your home.)" sets the hearthstone (MakeHome)    // a gryphon master: "(Fly somewhere.)" learns the flight point, opens the map
     static std::string TownGames(int role);  // (townsfolk section, below)
     static uint32 const HOSTILE_FACTION = 14;
 
@@ -717,6 +718,8 @@ namespace Dnd
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Browse their wares.)", TRADE_OPTION));
         if (t.townSpawn && speaker->IsTaxi())
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Fly somewhere.)", TAXI_OPTION));
+        if (t.townSpawn && speaker->IsInnkeeper())
+            Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^(Make this inn your home.)", HOME_OPTION));
         if (t.townSpawn && !TownGames(t.townRole).empty())
             Send(to, Acore::StringFormat("DO^{}^^^0^0^0^0^{}", GAME_OPTION, TownGames(t.townRole) == "drink" ?
                 "(Challenge them to a drinking contest.)" : "(Sit down for a game of chance.)"));
@@ -947,6 +950,11 @@ namespace Dnd
             CloseDialogue(p, true, 0);       // the talk waits; the flight map opens (and a new flight point is learned)
             p->GetSession()->SendLearnNewTaxiNode(speaker);
             p->GetSession()->SendTaxiMenu(speaker);
+            return;
+        }
+        if (town && idx == HOME_OPTION && speaker->IsInnkeeper())
+        {
+            MakeHome(p, speaker);            // the talk goes on: they may still want a game or a word
             return;
         }
         if (town && idx == TRADE_OPTION && speaker->IsVendor())
@@ -1230,7 +1238,9 @@ namespace Dnd
             c->HandleEmoteCommand(EMOTE_ONESHOT_TALK);
             Log(p, Acore::StringFormat("|cffffd100{}:|r {}", c->GetName(), r.after));
             if (!r.games.empty())
-                OpenTavern(p, c, r.games);   // already talked: straight to the table
+                OpenTavern(p, c, r.games);   // already talked: straight to the table (an innkeeper's has "make it home")
+            else if (c->IsInnkeeper())
+                MakeHome(p, c);
             else if (c->IsVendor())
                 p->GetSession()->SendListInventory(c->GetGUID());
             return true;

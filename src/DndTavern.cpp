@@ -19,9 +19,11 @@
 #include "Dnd.h"
 
 #include "Creature.h"
+#include "Map.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "StringFormat.h"
+#include "WorldSession.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -39,6 +41,7 @@ namespace Dnd
             ObjectGuid npc;
             uint32 spawn = 0;
             std::string name, games, game;
+            bool inn = false;                            // the host is an innkeeper: the table offers to make it home
             uint32 bet = 0;
             std::string phase;                           // "" no game yet, "yours" your move, "done"
             bool cheated = false;
@@ -147,7 +150,8 @@ namespace Dnd
         void Menu(Player* p, Table& t)
         {
             bool banned = sBanned.count({ p->GetGUID(), t.spawn }) != 0;
-            Send(p, Acore::StringFormat("GO^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney()));
+            Send(p, Acore::StringFormat("GO^{}^{}^{}^{}^{}", t.name, banned ? "" : t.games, PurseLeft(p, t), p->GetMoney(),
+                t.inn ? 1 : 0));
         }
 
         // the wager settles: +1 win, 0 push, -1 loss; mult = what a win pays (1, or 1.5 for a natural 21)
@@ -258,6 +262,18 @@ namespace Dnd
     }
 
     // the table opens (from a villager's talk, or a click on one already talked to)
+    // an innkeeper makes their inn your home: WoW's own bind (the hearthstone comes back here)
+    void MakeHome(Player* p, Creature* npc)
+    {
+        if (!p || !npc || p->GetMap()->Instanceable())
+            return;
+        npc->SetFacingToObject(p);
+        npc->HandleEmoteCommand(EMOTE_ONESHOT_TALK);
+        p->GetSession()->SendBindPoint(npc);
+        Log(p, Acore::StringFormat("|cffffd100{}:|r \"There's a bed here whenever you need one. Your hearthstone will bring you "
+            "home.\"", npc->GetName()));
+    }
+
     void OpenTavern(Player* p, Creature* npc, std::string const& games)
     {
         if (!p || !npc || games.empty())
@@ -268,6 +284,7 @@ namespace Dnd
         t.spawn = npc->GetSpawnId() ? npc->GetSpawnId() : npc->GetGUID().GetCounter();
         t.name = npc->GetName();
         t.games = games;
+        t.inn = npc->IsInnkeeper();
         npc->SetFacingToObject(p);
         Menu(p, t);
     }
@@ -301,6 +318,12 @@ namespace Dnd
             Error(p, "You're not at the table any more.");
             Send(p, "GX");
             sTables.erase(itr);
+            return;
+        }
+        if (f[0] == "home" && t.inn)
+        {
+            if (Creature* npc = NpcOf(p, t))
+                MakeHome(p, npc);
             return;
         }
         if (f[0] == "play" && f.size() >= 3 && t.phase != "yours")

@@ -391,6 +391,7 @@ namespace Dnd
     void TreatGameResult(Player* p, std::string const& args);      // the addon's minigame answer
     // tavern games (DndTavern.cpp): dice, cards and drinking contests with villagers, for a wager
     void OpenTavern(Player* p, Creature* npc, std::string const& games);
+    void MakeHome(Player* p, Creature* npc);    // an innkeeper's bind: the hearthstone comes back to this inn
     void TavernMessage(Player* p, std::string const& msg);
     void ForgetTavern(ObjectGuid guid);
     void ResetTavern(Player* p);
