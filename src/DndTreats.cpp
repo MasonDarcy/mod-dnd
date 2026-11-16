@@ -238,6 +238,14 @@ namespace Dnd
         sGameLevel.erase(guid);
     }
 
+    bool TreatFlagTaken(std::string const& flag)
+    {
+        for (auto const& [id, who] : sTaken)
+            if (auto itr = sTreats.find(id); itr != sTreats.end() && itr->second.flag == flag)
+                return true;
+        return false;
+    }
+
     // what's been found: in one shared world, a clue anyone found counts for everyone (a bot: only its own)
     std::vector<std::string> TreatFlags(Player* p)
     {
@@ -310,6 +318,8 @@ namespace Dnd
         SetState(p, t.id, TREAT_CLAIMED);
         DespawnGlint(p, t.id);
         TakeForEveryone(p, t);
+        if (!t.flag.empty() && !Test::IsBot(p->GetGUID()))
+            StoryApply("@find", p);              // (the Journal, rumours and the world may follow a find: "found:<flag>")
         // one find for the whole party: the finder gets everyone's share of the goods (players within 30 m) to hand out
         uint32 party = 1;
         p->GetMap()->DoForAllPlayers([&](Player* o)

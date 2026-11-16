@@ -387,6 +387,7 @@ namespace Dnd
     void ForgetTreats(ObjectGuid guid);
     void UpdateTreats(Player* p, uint32 diff);
     std::vector<std::string> TreatFlags(Player* p);
+    bool TreatFlagTaken(std::string const& flag);       // has anyone (not a bot) taken the find with this flag?
     bool TreatTellHiddenFor(Player const* p, GameObject const* go);    // claimed: the tell's gone, for them only
     void UpdateFood(Player* p, uint32 diff);                          // DndSpells.cpp: food's slow heal
     void TreatGameResult(Player* p, std::string const& args);      // the addon's minigame answer

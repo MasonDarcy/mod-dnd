@@ -3656,7 +3656,11 @@ namespace
             Expect(s, "standing tops out at 10", [](Ctx&) { return StoryValue("rep:selftest") == 10; });
             Expect(s, "clues and finds aren't the story's (the conversation decides them)", [](Ctx&)
             {
-                return !IsStoryCond("found:compass") && IsStoryCond("!story:x") && IsStoryCond("lean>=2") && StoryCond("found:compass");
+                return !IsStoryCond("found:compass") && IsStoryCond("!story:x") && IsStoryCond("lean>=2") && StoryCond("compass");
+            });
+            Expect(s, "a find nobody has taken isn't found; the story can ask", [](Ctx&)
+            {
+                return !StoryCond("found:no_such_find") && StoryCond("!found:no_such_find");
             });
             Act(s, [](Ctx&)
             {

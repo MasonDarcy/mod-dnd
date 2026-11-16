@@ -205,6 +205,9 @@ namespace Dnd
         }
         else if (c.rfind("resolved:", 0) == 0)
             v = StoryValue("@resolved:" + c.substr(9)) > 0;
+        else if (c.rfind("found:", 0) == 0)
+            v = TreatFlagTaken(c.substr(6));     // (the Journal's, a rumour's, a spawn's: anyone took it. A conversation
+                                                 // asks the clues instead - IsStoryCond says no - which counts a bot's own)
         else
             return true;                         // (not the story's: a clue or a find - the conversation decides those)
         return v != neg;
@@ -236,6 +239,8 @@ namespace Dnd
                 wasAbsent.insert(enc);
         for (std::string const& e : Split(effects, ','))
         {
+            if (e.empty() || e[0] == '@')
+                continue;                        // ("@find": nothing to set - only see what follows from it)
             if (e.rfind("rep:", 0) == 0)
             {
                 std::size_t at = e.find_first_of("+-", 4);
@@ -262,7 +267,8 @@ namespace Dnd
             else
                 Store("story:" + e, 1);
         }
-        FileLog(Acore::StringFormat("story: {} ({})", effects, by ? by->GetName() : std::string("the world")));
+        if (effects[0] != '@')
+            FileLog(Acore::StringFormat("story: {} ({})", effects, by ? by->GetName() : std::string("the world")));
         ApplyWorld();
         // an encounter the story just took away: resolved for everyone online (the rest when they next log in)
         for (auto const& [enc, cond] : sAbsent)
