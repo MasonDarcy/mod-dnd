@@ -900,6 +900,24 @@ namespace Dnd
         ELIXIR_AURA_LAST = 201679,
     };
     void SyncVisuals(Encounter& e);
+    // the story (DndStory.cpp, tools/story.py): one shared world - flags, standing, the lean - read and changed by
+    // conversations and encounters' endings, shown in the Journal
+    void LoadStory();
+    int StoryValue(std::string const& key);              // "story:flag", "rep:ironforge", "lean"
+    bool StoryCond(std::string const& cond);             // one condition ("story:x", "!story:x", "rep:ironforge>=2"...)
+    bool StoryConds(std::string const& list);            // comma-separated: all of them
+    bool IsStoryCond(std::string const& cond);           // the story's (not a clue's or a find's)
+    void StoryApply(std::string const& effects, Player* by);
+    void StoryOutcome(uint32 encounterId, std::string const& how, Player* by);   // the first ending: "peace", "sour", "fight"
+    void StoryNodeReached(uint32 node, std::string const& effects, Player* by);
+    uint32 StoryStartNode(uint32 encounterId, uint32 node);
+    bool StoryAbsent(uint32 encounterId);
+    std::string StoryRumor(uint32 zone);
+    void StoryCreatureAdded(Creature* c);
+    void CreditAbsent(Player* p);
+    void PushJournal(Player* p);
+    void StoryTestSet(std::string const& key, int value);   // the self-test's: a flag straight into the state
+    uint32 DndZoneOf(Player* p);                         // DndProgress.cpp: the zone (dnd_zone id) the player is in
     void AoePreview(Player* p, std::string const& spellName);   // hovering an area spell: who it would catch ("" clears)
     void ForgetAoePreview(ObjectGuid g);                     // DndCombat.cpp: before the first turn, this player goes first (the jig)                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
     // the spell jig (DndJig.cpp, `.dnd jig`): every spell, class action and consumable, tested by hand on the Shimmering Flats

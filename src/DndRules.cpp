@@ -568,6 +568,7 @@ namespace Dnd
         }
         LoadZones();
         LoadDialogue();
+        LoadStory();
         LoadTreats();
         LoadItemEffects();
         LoadTownsfolk();

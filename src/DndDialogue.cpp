@@ -63,6 +63,7 @@ namespace Dnd
         std::string sets;                    // clue learned on reaching this line
         std::vector<uint32> leaves;          // members who walk off when this line is reached (0 = everyone)
         int patience = 0;                    // change to the talker's patience on reaching this line
+        std::string story;                   // what reaching it does to the story (once, the first time anyone does)
         std::vector<DialogueOption> options;
     };
 
@@ -74,6 +75,7 @@ namespace Dnd
         uint32 checkTimer = 0;
         std::set<std::string> clues;         // what the player has learned (and which one-time options are used)
         int patience = 0, patienceMax = 0;
+        std::string rumor;                   // (a villager) what they open with about the story, before their usual line
         bool secured = false;                // offered a no-roll way out to PEACE: later failures don't start fights
         bool wagering = false;               // a wager's hand is being played (the talk waits for WagerResult)
         int32 wagerWin = 0, wagerLose = 0;   // where the talk goes on a win / a loss (a push comes back here)
@@ -394,7 +396,7 @@ namespace Dnd
     void LoadDialogue()
     {
         sNodes.clear();
-        if (QueryResult r = WorldDatabase.Query("SELECT id, text, shot, actor, emote, sets, patience, leaves FROM dnd_dialogue_node"))
+        if (QueryResult r = WorldDatabase.Query("SELECT id, text, shot, actor, emote, sets, patience, leaves, story FROM dnd_dialogue_node"))
         {
             do
             {
@@ -407,6 +409,7 @@ namespace Dnd
                 n.emote = f[4].Get<uint32>();
                 n.sets = f[5].Get<std::string>();
                 n.patience = f[6].Get<int32>();
+                n.story = f[8].Get<std::string>();
                 std::string leaves = f[7].Get<std::string>();
                 for (std::string_view v : Acore::Tokenize(leaves, ',', false))
                     if (!v.empty())
@@ -566,6 +569,12 @@ namespace Dnd
             return false;
         for (std::string const& c : o.need)
         {
+            if (IsStoryCond(c))
+            {
+                if (!StoryCond(c))
+                    return false;
+                continue;
+            }
             bool neg = !c.empty() && c[0] == '!';
             bool has = t.clues.count(neg ? c.substr(1) : c) != 0;
             if (has == neg)
@@ -623,6 +632,9 @@ namespace Dnd
         DialogueNode const& n = itr->second;
         EncounterDef const* def = GetEncounterDef(t.encounterId);
 
+        // what this line does to the story (never a self-test bot's walk through it)
+        if (!n.story.empty() && !Test::IsBot(p->GetGUID()))
+            StoryNodeReached(n.id, n.story, p);
         // what this line teaches, and what it does to the talker's patience
         bool learned = false;
         for (std::string_view v : Acore::Tokenize(n.sets, ',', false))
@@ -684,6 +696,11 @@ namespace Dnd
         }
 
         std::string text = ClassText(p, n.text, speaker);
+        if (!t.rumor.empty())
+        {
+            text = t.rumor + " / " + text;           // they open with the news, then their usual line
+            t.rumor.clear();
+        }
         for (Player* to : Audience(p))
             SendNode(to, p, t, n, speaker, voiceName, text);
         std::string logLine = n.actor == 0 ? "|cffc8b890" + text + "|r" : Acore::StringFormat("|cffffd100{}:|r {}", voiceName, text);
@@ -913,7 +930,7 @@ namespace Dnd
         Talk& t = sTalks[p->GetGUID()];
         t = Talk();
         t.encounterId = def->id;
-        t.node = def->dialogueNode;
+        t.node = StoryStartNode(def->id, def->dialogueNode);
         t.speaker = leader->GetGUID();
         t.patience = t.patienceMax = std::max(0, def->patience);
         for (std::string const& f : TreatFlags(p))
@@ -1403,6 +1420,8 @@ namespace Dnd
         t.townRole = role;
         t.node = r.nodes[c->GetSpawnId() % r.nodes.size()];
         t.speaker = c->GetGUID();
+        if (urand(0, 1))
+            t.rumor = StoryRumor(DndZoneOf(p));      // (half the time: what they've heard about what you did)
         for (std::string const& f : TreatFlags(p))
             t.clues.insert("found:" + f);
         p->StopMoving();

@@ -199,8 +199,17 @@ namespace Dnd
         PushProgress(p);
     }
 
+    uint32 DndZoneOf(Player* p)
+    {
+        auto g = p ? sGate.find(p->GetGUID()) : sGate.end();
+        return g == sGate.end() ? 0 : g->second.zoneId;
+    }
+
     void ShareEncounterWon(std::vector<Player*> const& winners, EncounterDef const& def, bool peaceful, bool halfXp)
     {
+        // the story remembers how it first ended (never a self-test bot's ending: theirs isn't the campaign's)
+        if (!winners.empty() && !Test::IsBot(winners.front()->GetGUID()))
+            StoryOutcome(def.id, peaceful ? (halfXp ? "sour" : "peace") : "fight", winners.front());
         for (Player* p : winners)
             OnEncounterWon(p, def, peaceful, halfXp);
         if (winners.empty())

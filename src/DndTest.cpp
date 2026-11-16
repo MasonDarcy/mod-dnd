@@ -3638,6 +3638,40 @@ namespace
                 return !Mob(c)->HasAura(STATUS_ASLEEP) && Bot(c)->GetDynObject(GROUND_CLOUD_OF_DAGGERS) == nullptr;
             });
         });
+        // the story: test-only flags (selftest_*), a made-up faction - the campaign's own state is never touched
+        add("story.conditions_and_effects", [=](Script& s)
+        {
+            Act(s, [](Ctx&) { StoryApply("selftest_a,selftest_b=3,rep:selftest+2", nullptr); });
+            Expect(s, "flags set, one to a value; standing up by 2", [](Ctx&)
+            {
+                return StoryCond("story:selftest_a") && StoryCond("story:selftest_b>=3") && !StoryCond("story:selftest_b>=4") &&
+                    StoryCond("!story:selftest_c") && StoryConds("story:selftest_a,rep:selftest>=2") && !StoryCond("rep:selftest>=3");
+            });
+            Act(s, [](Ctx&) { StoryApply("!selftest_a,rep:selftest-5", nullptr); });
+            Expect(s, "a flag cleared; standing down to -3", [](Ctx&)
+            {
+                return !StoryCond("story:selftest_a") && StoryCond("rep:selftest<=-3") && StoryValue("rep:selftest") == -3;
+            });
+            Act(s, [](Ctx&) { StoryApply("rep:selftest+40", nullptr); });
+            Expect(s, "standing tops out at 10", [](Ctx&) { return StoryValue("rep:selftest") == 10; });
+            Expect(s, "clues and finds aren't the story's (the conversation decides them)", [](Ctx&)
+            {
+                return !IsStoryCond("found:compass") && IsStoryCond("!story:x") && IsStoryCond("lean>=2") && StoryCond("found:compass");
+            });
+            Act(s, [](Ctx&)
+            {
+                for (char const* k : { "story:selftest_a", "story:selftest_b", "rep:selftest" })
+                    StoryTestSet(k, 0);
+            });
+        });
+        add("story.an_encounter_ends_once", [=](Script& s)
+        {
+            Act(s, [](Ctx&) { StoryTestSet("@resolved:999999", 0); StoryOutcome(999999, "fight", nullptr); });
+            Expect(s, "resolved, as the story remembers it", [](Ctx&) { return StoryCond("resolved:999999") && !StoryCond("!resolved:999999"); });
+            Act(s, [](Ctx&) { StoryOutcome(999999, "peace", nullptr); });
+            Expect(s, "a second ending changes nothing", [](Ctx&) { return StoryValue("@resolved:999999") == 1; });
+            Act(s, [](Ctx&) { StoryTestSet("@resolved:999999", 0); });
+        });
         add("rest.no_hearthing_out_of_a_fight", [=](Script& s)
         {
             AddBot(s, { FIGHTER, 1 });

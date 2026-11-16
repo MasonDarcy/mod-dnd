@@ -64,6 +64,8 @@ namespace Dnd
             JigMessage(p, msg.substr(4));
         else if (msg.rfind("aoe^", 0) == 0)
             AoePreview(p, msg.substr(4));
+        else if (msg == "journal")
+            PushJournal(p);
         else if (msg.rfind("say^", 0) == 0)
             DialogueChoose(p, uint32(std::atoi(msg.c_str() + 4)));
         else if (msg.rfind("hover^", 0) == 0)
@@ -124,6 +126,8 @@ public:
         SyncXp(p);                           // XP a crash lost since the last save, where the clears were kept
         LoadTreatProgress(p);
         LoadTownProgress(p);
+        CreditAbsent(p);                     // encounters the story took away while they were gone
+        PushJournal(p);
         p->UpdateObjectVisibility();         // treats already claimed: their tells go (DndTreats.cpp)
         EnsureKit(p);
         PushPendingChoices(p);               // a subclass / ASI still to choose comes back after a relog
@@ -747,6 +751,7 @@ public:
 
     void OnCreatureAddWorld(Creature* c) override
     {
+        StoryCreatureAdded(c);                   // (shown or hidden as the story stands)
         if (IsTownsfolk(c))
             c->SetNpcFlag(UNIT_NPC_FLAG_GOSSIP);   // the speech-bubble cursor: they can be talked to
     }
