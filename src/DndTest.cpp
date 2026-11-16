@@ -3691,6 +3691,20 @@ namespace
                 StoryTestSet("story:moira_council", int(c.v["council"]));
             });
         });
+        add("story.clues_are_shared", [=](Script& s)
+        {
+            Act(s, [](Ctx&) { StoryLearnClue("selftest", "pyrite"); StoryLearnClue("selftest", "unpaid"); StoryLearnClue("selftest2", "x"); });
+            Expect(s, "what one learned from them, the next one knows (and only for them)", [](Ctx&)
+            {
+                std::vector<std::string> c = StoryClues("selftest");
+                return c.size() == 2 && std::find(c.begin(), c.end(), "pyrite") != c.end() && StoryClues("selftest2").size() == 1;
+            });
+            Act(s, [](Ctx&)
+            {
+                for (char const* k : { "@clue:selftest:pyrite", "@clue:selftest:unpaid", "@clue:selftest2:x" })
+                    StoryTestSet(k, 0);
+            });
+        });
         add("story.an_encounter_ends_once", [=](Script& s)
         {
             Act(s, [](Ctx&) { StoryTestSet("@resolved:999999", 0); StoryOutcome(999999, "fight", nullptr); });

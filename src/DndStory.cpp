@@ -15,6 +15,8 @@
  *
  * Addon messages (the Journal, DnDJournal.lua): YO (it follows), YF^id^name^standing^about, YL^lean^ruthless^merciful,
  * YT^thread^title, YE^thread^text / Y+^more text, YD (done), YN^thread title (a new entry: a toast).
+ * The Chronicle (one shared record): YK (it follows), YC^time^who^kind^text (an entry; live, as it happens).
+ * The addon sends "journal" (the lot again).
  */
 #include "Dnd.h"
 
@@ -28,6 +30,7 @@
 #include "Player.h"
 #include "StringFormat.h"
 #include "Tokenize.h"
+#include <deque>
 #include <map>
 
 namespace Dnd
@@ -50,6 +53,18 @@ namespace Dnd
         std::vector<Rumor> sRumors;
         std::map<std::string, int> sState;
         std::string sLeanNeg = "Ruthless", sLeanPos = "Merciful";
+        struct LogEntry { uint32 at; std::string who, kind, text; };
+        std::deque<LogEntry> sChronicle;                       // the Chronicle's last entries (oldest first)
+        std::size_t const LOG_KEEP = 150;
+
+        std::string LogLine(LogEntry const& e)
+        {
+            std::string text = e.text.substr(0, 180);
+            for (char& ch : text)
+                if (ch == '^')
+                    ch = ' ';
+            return Acore::StringFormat("YC^{}^{}^{}^{}", e.at, e.who, e.kind, text);
+        }
 
         std::vector<std::string> Split(std::string const& s, char sep)
         {
@@ -232,7 +247,11 @@ namespace Dnd
                 Store("rep:" + fac, now);
                 for (Faction const& f : sFactions)
                     if (f.id == fac)
+                    {
                         AnnounceToAll(Acore::StringFormat("|cffffd100Your standing with {} {}.|r", f.name, delta > 0 ? "rises" : "falls"));
+                        StoryLog(by ? by->GetName() : "", "standing", Acore::StringFormat("Standing with {} {} ({:+d}).", f.name,
+                            delta > 0 ? "rose" : "fell", now));
+                    }
             }
             else if (e.rfind("lean", 0) == 0 && (e.size() > 4 && (e[4] == '+' || e[4] == '-')))
                 Store("lean", std::clamp(StoryValue("lean") + std::atoi(e.c_str() + 4), -10, 10));
@@ -256,10 +275,16 @@ namespace Dnd
         for (std::string const& key : after)
             if (!before.count(key))
                 for (Thread const& t : sThreads)
-                    if (key.rfind(t.id + "#", 0) == 0 && told.insert(t.title).second)
-                        for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
-                            if (p && p->IsInWorld())
-                                Send(p, "YN^" + t.title);
+                    if (key.rfind(t.id + "#", 0) == 0)
+                    {
+                        std::size_t idx = std::size_t(std::atoi(key.c_str() + t.id.size() + 1));
+                        if (idx < t.entries.size())
+                            StoryLog(by ? by->GetName() : "", "journal", t.title + ": " + t.entries[idx].text);
+                        if (told.insert(t.title).second)
+                            for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
+                                if (p && p->IsInWorld())
+                                    Send(p, "YN^" + t.title);
+                    }
         for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
             if (p && p->IsInWorld())
                 PushJournal(p);
@@ -271,6 +296,9 @@ namespace Dnd
         if (StoryValue(key))
             return;                              // (the story remembers the first ending only)
         Store(key, 1);
+        if (EncounterDef const* def = GetEncounterDef(encounterId))
+            StoryLog(by ? by->GetName() : "", "settled", Acore::StringFormat("{} - {}.", def->name,
+                how == "fight" ? "settled by force" : (how == "sour" ? "settled, on a sour note" : "settled without bloodshed")));
         auto itr = sOutcomes.find({ encounterId, how });
         if (itr != sOutcomes.end())
             StoryApply(itr->second, by);
@@ -363,6 +391,46 @@ namespace Dnd
         Send(p, "YD");
     }
 
+    void StoryLog(std::string const& who, std::string const& kind, std::string const& text)
+    {
+        LogEntry e{ uint32(time(nullptr)), who.empty() ? std::string("The world") : who, kind, text };
+        sChronicle.push_back(e);
+        while (sChronicle.size() > LOG_KEEP)
+            sChronicle.pop_front();
+        std::string w = e.who, k = kind, t = text.substr(0, 480);
+        CharacterDatabase.EscapeString(w);
+        CharacterDatabase.EscapeString(k);
+        CharacterDatabase.EscapeString(t);
+        CharacterDatabase.Execute("INSERT INTO dnd_story_log (at, who, kind, text) VALUES ({}, '{}', '{}', '{}')", e.at, w, k, t);
+        std::string line = LogLine(e);
+        for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
+            if (p && p->IsInWorld() && !Test::IsBot(guid))
+                Send(p, line);
+    }
+
+    void StoryLearnClue(std::string const& scope, std::string const& clue)
+    {
+        std::string key = "@clue:" + scope + ":" + clue;
+        if (!StoryValue(key))
+            Store(key, 1);
+    }
+
+    std::vector<std::string> StoryClues(std::string const& scope)
+    {
+        std::vector<std::string> out;
+        std::string prefix = "@clue:" + scope + ":";
+        for (auto itr = sState.lower_bound(prefix); itr != sState.end() && itr->first.rfind(prefix, 0) == 0; ++itr)
+            out.push_back(itr->first.substr(prefix.size()));
+        return out;
+    }
+
+    void PushChronicle(Player* p)
+    {
+        Send(p, "YK");
+        for (LogEntry const& e : sChronicle)
+            Send(p, LogLine(e));
+    }
+
     void LoadStory()
     {
         sFactions.clear();
@@ -411,6 +479,16 @@ namespace Dnd
         // the story so far (one shared world: the characters database keeps it)
         CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS dnd_story_state (flag VARCHAR(80) NOT NULL, value INT NOT NULL, "
             "at INT UNSIGNED NOT NULL DEFAULT 0, PRIMARY KEY (flag)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS dnd_story_log (id INT UNSIGNED NOT NULL AUTO_INCREMENT, "
+            "at INT UNSIGNED NOT NULL, who VARCHAR(48) NOT NULL, kind VARCHAR(12) NOT NULL, text VARCHAR(500) NOT NULL, "
+            "PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        sChronicle.clear();
+        if (QueryResult r = CharacterDatabase.Query("SELECT at, who, kind, text FROM (SELECT * FROM dnd_story_log ORDER BY id DESC "
+            "LIMIT {}) recent ORDER BY id", LOG_KEEP))
+            do
+                sChronicle.push_back({ r->Fetch()[0].Get<uint32>(), r->Fetch()[1].Get<std::string>(), r->Fetch()[2].Get<std::string>(),
+                    r->Fetch()[3].Get<std::string>() });
+            while (r->NextRow());
         sState.clear();
         if (QueryResult r = CharacterDatabase.Query("SELECT flag, value FROM dnd_story_state"))
             do

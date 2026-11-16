@@ -556,6 +556,11 @@ namespace Dnd
     }
 
     static std::string OnceKey(DialogueOption const& o) { return "#" + o.text; }
+    // where a conversation's clues are shared (StoryLearnClue): the encounter, or the villager
+    static std::string ClueScope(Talk const& t)
+    {
+        return t.encounterId ? std::to_string(t.encounterId) : "t" + std::to_string(t.townSpawn);
+    }
 
     static bool Visible(Player* p, Talk const& t, DialogueOption const& o)
     {
@@ -639,7 +644,11 @@ namespace Dnd
         bool learned = false;
         for (std::string_view v : Acore::Tokenize(n.sets, ',', false))
             if (!v.empty() && t.clues.emplace(v).second)
+            {
                 learned = true;
+                if (!Test::IsBot(p->GetGUID()))
+                    StoryLearnClue(ClueScope(t), std::string(v));   // (the others will know it too)
+            }
         if (learned)
             for (Player* to : Audience(p))
                 Send(to, "DK");              // the addon plays the "secret found" jingle with this line
@@ -934,7 +943,10 @@ namespace Dnd
         t.speaker = leader->GetGUID();
         t.patience = t.patienceMax = std::max(0, def->patience);
         for (std::string const& f : TreatFlags(p))
-            t.clues.insert("found:" + f);    // things found in the world count as clues ("found:compass")
+            t.clues.insert("found:" + f);
+        if (!Test::IsBot(p->GetGUID()))
+            for (std::string const& c : StoryClues(ClueScope(t)))
+                t.clues.insert(c);                   // what any of you already learned from them    // things found in the world count as clues ("found:compass")
         // turn to whoever is talking and hold still for the conversation; the addon draws the letterbox bars
         p->StopMoving();
         SetRooted(p, true);              // rooted first, then turned to face them (the turn is a tiny teleport)
@@ -1424,6 +1436,9 @@ namespace Dnd
             t.rumor = StoryRumor(DndZoneOf(p));      // (half the time: what they've heard about what you did)
         for (std::string const& f : TreatFlags(p))
             t.clues.insert("found:" + f);
+        if (!Test::IsBot(p->GetGUID()))
+            for (std::string const& c : StoryClues(ClueScope(t)))
+                t.clues.insert(c);                   // what any of you already learned from them
         p->StopMoving();
         SetRooted(p, true);
         p->NearTeleportTo(p->GetPositionX(), p->GetPositionY(), p->GetPositionZ(), p->GetAngle(c));

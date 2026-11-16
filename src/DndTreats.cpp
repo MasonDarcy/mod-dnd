@@ -238,11 +238,13 @@ namespace Dnd
         sGameLevel.erase(guid);
     }
 
+    // what's been found: in one shared world, a clue anyone found counts for everyone (a bot: only its own)
     std::vector<std::string> TreatFlags(Player* p)
     {
         std::vector<std::string> out;
+        auto const& book = TakenBook(p->GetGUID());
         for (auto const& [id, t] : sTreats)
-            if (!t.flag.empty() && StateOf(p, id) == TREAT_CLAIMED)
+            if (!t.flag.empty() && (StateOf(p, id) == TREAT_CLAIMED || (!Test::IsBot(p->GetGUID()) && book.count(id))))
                 out.push_back(t.flag);
         return out;
     }
@@ -372,6 +374,8 @@ namespace Dnd
             for (std::size_t i = 0; i < got.size(); ++i)
                 list += (i == 0 ? "" : (i + 1 == got.size() ? " and " : ", ")) + got[i];
             Announce(p, Acore::StringFormat("{} searched {} in {} and came away with {}.", p->GetName(), what, ZoneName(p), list));
+            if (!Test::IsBot(p->GetGUID()))
+                StoryLog(p->GetName(), "find", Acore::StringFormat("Searched {} in {} and came away with {}.", what, ZoneName(p), list));
         }
         parts.push_back(Acore::StringFormat("{} XP", xp));
         std::string reward;

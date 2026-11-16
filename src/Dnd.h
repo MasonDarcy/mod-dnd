@@ -916,6 +916,14 @@ namespace Dnd
     void StoryCreatureAdded(Creature* c);
     void CreditAbsent(Player* p);
     void PushJournal(Player* p);
+    // the Chronicle: one shared record of what happened, who did it and when - encounters settled, the Journal's new
+    // entries, standing and finds (characters: dnd_story_log; the Journal's Chronicle tab)
+    void StoryLog(std::string const& who, std::string const& kind, std::string const& text);
+    void PushChronicle(Player* p);
+    // clues learned in a conversation, shared: what one of you learned from them, the others know when they talk to them
+    // (scope: the encounter id, or "t<spawn>" for a villager)
+    void StoryLearnClue(std::string const& scope, std::string const& clue);
+    std::vector<std::string> StoryClues(std::string const& scope);
     void StoryTestSet(std::string const& key, int value);   // the self-test's: a flag straight into the state
     uint32 DndZoneOf(Player* p);                         // DndProgress.cpp: the zone (dnd_zone id) the player is in
     void AoePreview(Player* p, std::string const& spellName);   // hovering an area spell: who it would catch ("" clears)

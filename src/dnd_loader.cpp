@@ -65,7 +65,10 @@ namespace Dnd
         else if (msg.rfind("aoe^", 0) == 0)
             AoePreview(p, msg.substr(4));
         else if (msg == "journal")
+        {
             PushJournal(p);
+            PushChronicle(p);
+        }
         else if (msg.rfind("say^", 0) == 0)
             DialogueChoose(p, uint32(std::atoi(msg.c_str() + 4)));
         else if (msg.rfind("hover^", 0) == 0)
@@ -128,6 +131,7 @@ public:
         LoadTownProgress(p);
         CreditAbsent(p);                     // encounters the story took away while they were gone
         PushJournal(p);
+        PushChronicle(p);
         p->UpdateObjectVisibility();         // treats already claimed: their tells go (DndTreats.cpp)
         EnsureKit(p);
         PushPendingChoices(p);               // a subclass / ASI still to choose comes back after a relog
