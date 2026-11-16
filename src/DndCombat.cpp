@@ -234,6 +234,9 @@ namespace Dnd
             case SPELL_STINKING_CLOUD:    return GROUND_STINKING_CLOUD;
             case SPELL_HUNGER_OF_HADAR:   return GROUND_HUNGER_OF_HADAR;
             case SPELL_SLEET_STORM:       return GROUND_SLEET_STORM;
+            case SPELL_CREATE_BONFIRE:    return GROUND_BONFIRE;
+            case SPELL_FLAMING_SPHERE:    return GROUND_FLAMING_SPHERE;
+            case SPELL_BLACK_TENTACLES:   return GROUND_BLACK_TENTACLES;
             default:                      return 0;
         }
     }
@@ -279,6 +282,20 @@ namespace Dnd
                 on(!c.faithBy.IsEmpty(), STATUS_SHIELD_OF_FAITH);
                 on(!c.heroismBy.IsEmpty(), STATUS_HEROISM);
                 on(c.stunned > 0, STATUS_STUNNED);
+                on(c.blinded, STATUS_BLINDED);
+                on(!c.banedBy.IsEmpty(), STATUS_BANED);
+                on(!c.hastedBy.IsEmpty(), STATUS_HASTED);
+                on(!c.slowBy.IsEmpty(), STATUS_SLOWED);
+                on(!c.sanctuaryBy.IsEmpty(), STATUS_SANCTUARY);
+                on(c.images > 0, STATUS_MIRROR_IMAGE);
+                on(!c.enfeebledBy.IsEmpty(), STATUS_ENFEEBLED);
+                on(!c.laughingBy.IsEmpty(), STATUS_LAUGHING);
+                on(c.bladeWard, STATUS_BLADE_WARD);
+                on(!c.banishedBy.IsEmpty(), STATUS_BANISHED);
+                on(!c.invisibleBy.IsEmpty(), STATUS_INVISIBLE);
+                on(!c.stoneskinBy.IsEmpty(), STATUS_STONESKIN);
+                on(c.deathWard, STATUS_DEATH_WARD);
+                on(c.fireShield, STATUS_FIRE_SHIELD);
                 if (c.concentration && ConcentrationLive(e, c))
                     want.insert(ConcentrationVisual(c.concentration));
             }
@@ -381,6 +398,15 @@ namespace Dnd
         float radius = 0.f, cone = 0.f;
         if (si->Id == SPELL_THUNDERWAVE || si->Id == SPELL_SPIRIT_GUARDIANS)
             radius = 4.5f;                        // (all round you: the rules' own reach, DndSpells.cpp)
+        else if (si->Id == SPELL_EARTH_TREMOR)
+            radius = 3.f;
+        else if (si->Id == SPELL_WORD_OF_RADIANCE || si->Id == SPELL_THUNDERCLAP)
+            radius = 2.f;                         // (right beside you)
+        else if (si->Id == SPELL_COLOR_SPRAY)
+        {
+            radius = 4.5f;
+            cone = float(M_PI) / 3.f;
+        }
         else
             for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
                 if (si->Effects[i].TargetA.GetSelectionCategory() == TARGET_SELECT_CATEGORY_CONE)
@@ -432,6 +458,23 @@ namespace Dnd
         add(c.raging, "Raging");
         add(c.dodging, "Dodging");
         add(c.hidden, "Hidden");
+        add(c.blinded, "Blinded");
+        add(!c.banedBy.IsEmpty(), "Baned");
+        add(!c.hastedBy.IsEmpty(), "Hasted");
+        add(!c.slowBy.IsEmpty(), "Slowed");
+        add(!c.sanctuaryBy.IsEmpty(), "Sanctuary");
+        add(c.images > 0, "Images");
+        add(!c.enfeebledBy.IsEmpty(), "Enfeebled");
+        add(!c.laughingBy.IsEmpty(), "Laughing");
+        add(c.commanded, "Commanded");
+        add(c.lethargic, "Lethargic");
+        add(c.bladeWard, "Blade Ward");
+        add(c.acidDice > 0, "Acid");
+        add(!c.banishedBy.IsEmpty(), "Banished");
+        add(!c.invisibleBy.IsEmpty(), "Invisible");
+        add(!c.stoneskinBy.IsEmpty(), "Stoneskin");
+        add(c.deathWard, "Death Ward");
+        add(c.fireShield, "Fire Shield");
         return out;
     }
 
@@ -576,6 +619,8 @@ namespace Dnd
             (u->IsPlayer() && IsClass(u->ToPlayer(), CLASS_BARD) && Level(u->ToPlayer()) >= 2 ? Prof(Level(u->ToPlayer())) / 2 : 0), 0);
         c.initiative = r.total;
         c.lastPos = u->GetPosition();
+        if (Creature* cr = u->ToCreature())
+            RollCarried(c, cr);                  // the potions and scrolls it has on it this time
         rollText = Acore::StringFormat("|cffaaaaaaInitiative|r  {}: {}", c.name, r.text);
         return c;
     }
@@ -1122,7 +1167,15 @@ namespace Dnd
         EncounterDef const* def = GetEncounterDef(e.defId);
         uint32 share = players.empty() ? 0 : xp / players.size();
         if (def)
+        {
+            // what the creatures carried and didn't use: to the players clearing it for the first time
+            std::vector<Player*> takers;
+            for (Player* p : players)
+                if (!HasCleared(p, def->id))
+                    takers.push_back(p);
+            CreatureDrops(e, takers);
             ShareEncounterWon(players, *def);
+        }
         else if (share)
             for (Player* p : players)
             {
@@ -1656,6 +1709,7 @@ namespace Dnd
             c.moveMax = std::max(0.f, c.moveMax - 3.f);
             c.slowed = false;
         }
+        SpellTurnReset(e, c);                       // Haste, Slow; the short spells that run out now
         if (c.restrained)
             c.moveMax = 0.f;                         // Entangle: going nowhere
         c.lastPos = u->GetPosition();
@@ -1736,6 +1790,14 @@ namespace Dnd
             if (!u->IsAlive() || e.phase == Encounter::PHASE_DONE)
                 return;                          // (its death moved the fight on)
         }
+        if (SpellTurnStart(e, c, u))
+        {
+            if (!u->IsAlive() || e.phase == Encounter::PHASE_DONE)
+                return;                          // (its death moved the fight on)
+            e.phase = Encounter::PHASE_NEXT;
+            e.timer = 1500;
+            return;
+        }
         if (c.turned)
         {
             Broadcast(e, Acore::StringFormat("{} is |cffffe080turned|r: it cowers from the holy power and does nothing.", c.name));
@@ -1750,11 +1812,9 @@ namespace Dnd
             e.timer = 1200;
             return;
         }
-        if (c.afraid && !c.player)
+        if (c.afraid && !c.player && c.killerBy.IsEmpty())   // (Phantasmal Killer has its own save: SpellTurnStart)
         {
-            int dc = 13;
-            if (Player* by = ObjectAccessor::FindPlayer(c.afraidBy))
-                dc = SpellSaveDC(by);
+            int dc = ConditionDC(c.afraidBy);
             D20Result r = RollD20(AbilityMod(u, WIS), 0);
             if (r.total >= dc)
             {
@@ -1787,9 +1847,7 @@ namespace Dnd
             if (!inReach)
             {
                 // nobody to hit from where it's stuck: it strains against the vines (a STR check against the spell)
-                int dc = 13;
-                if (Player* by = ObjectAccessor::FindPlayer(c.restrainedBy))
-                    dc = SpellSaveDC(by);
+                int dc = ConditionDC(c.restrainedBy);
                 D20Result r = RollD20(AbilityMod(u, STR), 0);
                 bool freed = r.total >= dc;
                 Broadcast(e, Acore::StringFormat("{} strains against the vines: STR {} vs DC {} - {}", c.name, r.text, dc,
@@ -1819,12 +1877,7 @@ namespace Dnd
             bool freed = false;
             {
                 D20Result r = RollD20(AbilityMod(u, WIS), 0);
-                int dc = 13;
-                for (Combatant const& o : e.order)
-                    if (o.player)
-                        if (Unit* pu = e.GetUnit(o))
-                            if (Player* pl = pu->ToPlayer())
-                                dc = SpellSaveDC(pl);
+                int dc = ConditionDC(c.heldBy);      // whoever cast it: a player's DC, or a creature's
                 freed = r.total >= dc;
                 Broadcast(e, Acore::StringFormat("{} is |cffff8000Held|r and can't act. WIS save {} vs DC {}: {}", c.name, r.text, dc,
                     freed ? "|cff40ff40breaks free|r" : "|cffff4040still held|r"));
@@ -2071,8 +2124,7 @@ namespace Dnd
         Combatant* c = e->Find(u->GetGUID());
         if (!c || !c->alive)
             return;
-        if (c->player)
-            EndConcentration(u, " - they fell");
+        EndConcentration(u, " - they fell");    // (a casting creature's hold on someone ends with it)
         c->alive = false;
         c->prone = false;
         if (c->held)
@@ -2510,8 +2562,7 @@ namespace Dnd
 
     static Unit* PickTarget(Encounter& e, Creature* cr)
     {
-        Unit* best = nullptr;
-        float bestScore = 1e9f;
+        std::vector<std::pair<float, Unit*>> ranked;
         // the downed are left alone while someone still stands; with nobody standing, they're fair game (each hit a
         // failed death save, two from close by)
         bool standing = false;
@@ -2520,20 +2571,19 @@ namespace Dnd
                 standing = true;
         for (Combatant const& c : e.order)
         {
-            if (!c.player || c.gone || !c.alive || (c.downed && standing))
-                continue;
+            if (!c.player || c.gone || !c.alive || (c.downed && standing) || !c.banishedBy.IsEmpty())
+                continue;                        // (the banished aren't here to be hit)
             Unit* u = e.GetUnit(c);
             if (!u || !u->IsAlive())
                 continue;
             // nearest, with a pull towards wounded and low-AC targets
-            float score = cr->GetExactDist(u) + u->GetHealthPct() * 0.05f + ArmorClass(u) * 0.3f;
-            if (score < bestScore)
-            {
-                bestScore = score;
-                best = u;
-            }
+            ranked.emplace_back(cr->GetExactDist(u) + u->GetHealthPct() * 0.05f + ArmorClass(u) * 0.3f, u);
         }
-        return best;
+        std::sort(ranked.begin(), ranked.end(), [](auto const& x, auto const& y) { return x.first < y.first; });
+        for (auto const& [score, u] : ranked)
+            if (!SanctuaryHolds(cr, u))          // Sanctuary: a WIS save to attack them, or it looks elsewhere
+                return u;
+        return nullptr;
     }
 
     static void RunCreatureTurn(Encounter& e, Combatant& c, Creature* cr)
@@ -2548,6 +2598,15 @@ namespace Dnd
         }
         e.aiTarget = target->GetGUID();
         cr->SetFacingToObject(target);
+        e.aiCast = -1;
+        if (CreaturePlanCast(e, cr, true))
+        {
+            e.aiRanged = false;                  // a spell that suits, from where it stands
+            e.phase = Encounter::PHASE_AI_ACT;
+            e.timer = 200;
+            return;
+        }
+        e.aiTarget = target->GetGUID();
         float dist = cr->GetExactDist(target);
         float reach = MeleeRange(cr, target);
         bool inReach = dist <= reach;
@@ -2734,6 +2793,24 @@ namespace Dnd
             return;
         }
         cr->SetFacingToObject(target);
+        if (e.aiCast >= 0 || CreaturePlanCast(e, cr))
+        {
+            if (Combatant* me = e.Find(cr->GetGUID()))
+            {
+                if (me->actionUsed)
+                {
+                    e.aiCast = -1;
+                    return;
+                }
+                me->actionUsed = true;
+            }
+            cr->HandleEmoteCommand(EMOTE_ONESHOT_SPELL_PRECAST);
+            e.aiStrike = 3;                      // a spell: the precast, then the cast, then what it does
+            e.aiStrikeStage = 0;
+            e.phase = Encounter::PHASE_AI_STRIKE;
+            e.timer = ROLL_BEAT;
+            return;
+        }
         if (Combatant* me = e.Find(cr->GetGUID()))
         {
             if (me->actionUsed)
@@ -2877,23 +2954,33 @@ namespace Dnd
                     if (e.timer <= 0)
                     {
                         bool ranged = e.aiStrike == 2;
+                        bool casting = e.aiStrike == 3;
                         Creature* cr = u && u->IsAlive() ? u->ToCreature() : nullptr;
                         if (e.aiStrikeStage == 0 && cr)
                         {
-                            CreatureSwing(e, cr);
+                            if (casting)
+                                CreatureCastVisual(e, cr);
+                            else
+                                CreatureSwing(e, cr);
                             e.aiStrikeStage = 1;
-                            e.timer = ranged ? 0 : 450;   // a swing lands mid-animation; a missile lands on its own
+                            e.timer = casting ? 700 : (ranged ? 0 : 450);   // a swing lands mid-animation; a missile on its own
                             if (!ranged)
                                 break;
                         }
                         if (cr)
-                            CreatureStrike(e, cr);
+                        {
+                            if (casting)
+                                CreatureCastResolve(e, cr);
+                            else
+                                CreatureStrike(e, cr);
+                        }
                         e.aiStrike = 0;
                         e.aiStrikeStage = 0;
+                        e.aiCast = -1;
                         if (e.phase == Encounter::PHASE_DONE)
                             break;
                         e.phase = Encounter::PHASE_AI_END;
-                        e.timer = ranged ? 1500 : 1000;   // let a missile land before the next turn
+                        e.timer = (ranged || casting) ? 1500 : 1000;   // let a missile land before the next turn
                     }
                     break;
                 case Encounter::PHASE_AI_END:

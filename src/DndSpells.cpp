@@ -11,9 +11,11 @@
 
 #include "Creature.h"
 #include "GameTime.h"
+#include "Bag.h"
 #include "Item.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "SpellAuras.h"
@@ -22,6 +24,7 @@
 #include "SpellScript.h"
 #include "SpellScriptLoader.h"
 #include "StringFormat.h"
+#include "Random.h"
 #include <cmath>
 
 namespace Dnd
@@ -67,6 +70,49 @@ namespace Dnd
         { SPELL_STINKING_CLOUD,   COST_ACTION,   3,   false,      false },
         { SPELL_HUNGER_OF_HADAR,  COST_ACTION,   3,   false,      false },
         { SPELL_SLEET_STORM,      COST_ACTION,   3,   false,      false },
+        { SPELL_THORN_WHIP,       COST_ACTION,   0,   false,      false },
+        { SPELL_FROSTBITE,        COST_ACTION,   0,   false,      false },
+        { SPELL_MIND_SLIVER,      COST_ACTION,   0,   false,      false },
+        { SPELL_WORD_OF_RADIANCE, COST_ACTION,   0,   false,      false },
+        { SPELL_THUNDERCLAP,      COST_ACTION,   0,   false,      false },
+        { SPELL_INFESTATION,      COST_ACTION,   0,   false,      false },
+        { SPELL_PRIMAL_SAVAGERY,  COST_ACTION,   0,   false,      false },
+        { SPELL_BLADE_WARD,       COST_ACTION,   0,   true,       false },
+        { SPELL_CREATE_BONFIRE,   COST_ACTION,   0,   false,      false },
+        { SPELL_COMMAND,          COST_ACTION,   1,   false,      false },
+        { SPELL_HIDEOUS_LAUGHTER, COST_ACTION,   1,   false,      false },
+        { SPELL_BANE,             COST_ACTION,   1,   false,      false },
+        { SPELL_EARTH_TREMOR,     COST_ACTION,   1,   false,      false },
+        { SPELL_CATAPULT,         COST_ACTION,   1,   false,      false },
+        { SPELL_CHAOS_BOLT,       COST_ACTION,   1,   false,      false },
+        { SPELL_SANCTUARY,        COST_BONUS,    1,   true,       false },
+        { SPELL_COLOR_SPRAY,      COST_ACTION,   1,   false,      false },
+        { SPELL_SPIRITUAL_WEAPON, COST_BONUS,    2,   false,      false },
+        { SPELL_ACID_ARROW,       COST_ACTION,   2,   false,      false },
+        { SPELL_BLINDNESS,        COST_ACTION,   2,   false,      false },
+        { SPELL_MIRROR_IMAGE,     COST_ACTION,   2,   true,       false },
+        { SPELL_MIND_SPIKE,       COST_ACTION,   2,   false,      false },
+        { SPELL_SNOWBALL_SWARM,   COST_ACTION,   2,   false,      false },
+        { SPELL_FLAMING_SPHERE,   COST_ACTION,   2,   false,      false },
+        { SPELL_RAY_OF_ENFEEBLEMENT, COST_ACTION, 2,  false,      false },
+        { SPELL_HASTE,            COST_ACTION,   3,   true,       false },
+        { SPELL_SLOW,             COST_ACTION,   3,   false,      false },
+        { SPELL_DISPEL_MAGIC,     COST_ACTION,   3,   false,      false },
+        { SPELL_THUNDER_STEP,     COST_ACTION,   3,   false,      false },
+        { SPELL_TIDAL_WAVE,       COST_ACTION,   3,   false,      false },
+        { SPELL_AURA_OF_VITALITY, COST_BONUS,    3,   false,      false },
+        { SPELL_REVIVIFY,         COST_ACTION,   3,   true,       false },
+        { SPELL_ICE_STORM,        COST_ACTION,   4,   false,      false },
+        { SPELL_BLIGHT,           COST_ACTION,   4,   false,      false },
+        { SPELL_VITRIOLIC_SPHERE, COST_ACTION,   4,   false,      false },
+        { SPELL_BANISHMENT,       COST_ACTION,   4,   false,      false },
+        { SPELL_GREATER_INVISIBILITY, COST_ACTION, 4, true,       false },
+        { SPELL_STONESKIN,        COST_ACTION,   4,   true,       false },
+        { SPELL_DEATH_WARD,       COST_ACTION,   4,   true,       false },
+        { SPELL_DIMENSION_DOOR,   COST_ACTION,   4,   false,      false },
+        { SPELL_BLACK_TENTACLES,  COST_ACTION,   4,   false,      false },
+        { SPELL_PHANTASMAL_KILLER, COST_ACTION,  4,   false,      false },
+        { SPELL_FIRE_SHIELD,      COST_ACTION,   4,   true,       false },
         { SPELL_SACRED_FLAME,     COST_ACTION,   0,   false,      false },
         { SPELL_TOLL_THE_DEAD,    COST_ACTION,   0,   false,      false },
         { SPELL_BLESS,            COST_ACTION,   1,   false,      false },
@@ -362,6 +408,13 @@ namespace Dnd
     static bool sLastCrit = false;           // the last AttackRoll was a critical hit (Great Weapon Master)
 
     // advantage/disadvantage from conditions: prone targets, ranged attacks in melee
+    // a spell whose concentration 'by' still holds (Bane, Haste, Slow...: the effect lasts while it does)
+    static bool Held(ObjectGuid by, uint32 spell)
+    {
+        Combatant* c = by.IsEmpty() ? nullptr : CombatantOf(by);
+        return c && c->concentration == spell;
+    }
+
     static int AttackAdv(Unit* attacker, Unit* target, bool melee, std::string& why)
     {
         int adv = 0;
@@ -440,6 +493,26 @@ namespace Dnd
             ++adv;
             why += " target asleep: advantage;";
         }
+        if (tc && tc->blinded)
+        {
+            ++adv;
+            why += " target blinded: advantage;";
+        }
+        if (tc && Held(tc->invisibleBy, SPELL_GREATER_INVISIBILITY))
+        {
+            --adv;
+            why += " target invisible: disadvantage;";
+        }
+        if (Combatant* ic = CombatantOf(attacker->GetGUID()); ic && Held(ic->invisibleBy, SPELL_GREATER_INVISIBILITY))
+        {
+            ++adv;
+            why += " unseen: advantage;";
+        }
+        if (Combatant* bc = CombatantOf(attacker->GetGUID()); bc && bc->blinded)
+        {
+            --adv;
+            why += " blinded: disadvantage;";
+        }
         if (tc && tc->guided)
         {
             ++adv;
@@ -514,12 +587,49 @@ namespace Dnd
     static bool sSneakReady = false;         // this weapon attack may carry Sneak Attack (finesse / ranged, once a turn)
     static int sLastAdv = 0;                 // the last attack roll's advantage (Sneak Attack wants it)
     static uint32 sCurSpell = 0;             // the spell whose hit is resolving (metamagic on its saves)
+    static int sCreatureScrollDc = 0;        // a creature reading a scroll: the scroll's DC, not its own
     static void VenomRider(Unit* attacker, Unit* target);
 
     // d20 attack roll + damage. Returns true on a hit.
     static bool AttackRoll(Unit* attacker, Unit* target, std::string const& what, int bonus, Dice dice, DmgType type,
         SpellInfo const* spell, bool melee, bool showMelee, int* dealt = nullptr, bool defer = false)
     {
+        // an attack from under Sanctuary ends it
+        if (attacker->IsPlayer() && !target->IsPlayer())
+            if (Combatant* sc = CombatantOf(attacker->GetGUID()); sc && !sc->sanctuaryBy.IsEmpty())
+            {
+                sc->sanctuaryBy.Clear();
+                Narrate(attacker, target, Acore::StringFormat("   {} attacks: Sanctuary ends.", Who(attacker)));
+            }
+        // Mirror Image: a d20 says whether a double is in the way (6+ with three, 8+ with two, 11+ with one); the double
+        // has AC 10 + DEX, and a hit destroys it
+        if (Combatant* mi = CombatantOf(target->GetGUID()); mi && mi->images > 0 && attacker != target)
+        {
+            int need = mi->images >= 3 ? 6 : (mi->images == 2 ? 8 : 11);
+            int roll = D(20);
+            if (roll >= need)
+            {
+                int iac = 10 + AbilityMod(target, DEX);
+                D20Result ir = RollD20(bonus, 0);
+                bool ihit = ir.natural == 20 || (ir.natural != 1 && ir.total >= iac);
+                if (ihit)
+                    --mi->images;
+                Narrate(attacker, target, Acore::StringFormat("{} {} -> {}: a mirror image is in the way (d20 {} vs {}) - {} vs AC {}: {}",
+                    Who(attacker), what, Who(target), roll, need, ir.text, iac, ihit ?
+                    Acore::StringFormat("|cffffd100the double bursts|r ({} left)", int(mi->images)) : "|cffaaaaaamisses the double|r"));
+                if (defer)
+                {
+                    PendingAttack& pa = sPending[attacker->GetGUID()];
+                    pa = PendingAttack();
+                    pa.target = target->GetGUID();
+                    pa.hit = false;
+                    pa.melee = showMelee;
+                }
+                if (Encounter* me = EncounterOf(target->GetGUID()))
+                    PushOrder(*me);
+                return false;
+            }
+        }
         std::string why;
         int adv = AttackAdv(attacker, target, melee, why);
         // Entropic Ward (Great Old One 6): once a short rest a creature's attack on the warlock is at disadvantage; if it
@@ -551,6 +661,12 @@ namespace Dnd
             }
         D20Result r = RollD20(bonus, adv);
         sLastAdv = adv;
+        if (Combatant* bnc = CombatantOf(attacker->GetGUID()); bnc && Held(bnc->banedBy, SPELL_BANE))
+        {
+            int bn = D(4);                       // Bane
+            r.total -= bn;
+            r.text += Acore::StringFormat(" - {} (Bane) = {}", bn, r.total);
+        }
         if (Player* sp = attacker->ToPlayer(); sp && IsSneaking(sp))
             MarkSneakStruck(sp);                 // the strike gives you away - the fight starts around it
         if (Combatant* hc = CombatantOf(attacker->GetGUID()); hc && hc->hidden)
@@ -751,10 +867,37 @@ namespace Dnd
         bool extraAdv = false)
     {
         int adv = SaveAdvantage(target, a, magic, poison) || extraAdv ? 1 : 0;
+        if (Player* rp = target->ToPlayer(); rp && RacialSaveAdvantage(rp, a, what, poison))
+            adv = 1;                             // racial: Fey Ancestry, Duergar Resilience, Brave...
         Player* pcaster = caster ? caster->ToPlayer() : nullptr;
         if (pcaster && sCurSpell && CastHas(pcaster, sCurSpell, "heighten"))
             --adv;                               // Heightened Spell: the first save is at disadvantage
-        D20Result r = RollD20(SaveBonus(target, a), adv);
+        Combatant* stc = CombatantOf(target->GetGUID());
+        if (stc && a == DEX && Held(stc->hastedBy, SPELL_HASTE))
+            adv = std::min(1, adv + 1);          // Haste: advantage on DEX saves
+        bool slowSave = stc && a == DEX && Held(stc->slowBy, SPELL_SLOW);
+        if (pcaster && !target->IsPlayer())
+            if (Combatant* sc = CombatantOf(pcaster->GetGUID()); sc && !sc->sanctuaryBy.IsEmpty())
+            {
+                sc->sanctuaryBy.Clear();         // a spell at a foe ends Sanctuary
+                Narrate(pcaster, target, Acore::StringFormat("   {} turns a spell on a foe: Sanctuary ends.", Who(pcaster)));
+            }
+        D20Result r = RollD20(SaveBonus(target, a) - (slowSave ? 2 : 0), adv);
+        if (slowSave)
+            r.text += " (Slow: -2)";
+        if (stc && !stc->sliverBy.IsEmpty())
+        {
+            int sl = D(4);                       // Mind Sliver: spent on this save
+            stc->sliverBy.Clear();
+            r.total -= sl;
+            r.text += Acore::StringFormat(" - {} (Mind Sliver) = {}", sl, r.total);
+        }
+        if (stc && Held(stc->banedBy, SPELL_BANE))
+        {
+            int bn = D(4);
+            r.total -= bn;
+            r.text += Acore::StringFormat(" - {} (Bane) = {}", bn, r.total);
+        }
         if (Combatant* lc = target->IsPlayer() ? CombatantOf(target->GetGUID()) : nullptr; lc && lc->luckArmed)
         {
             int luck = D(10);                    // Dark One's Own Luck: +1d10 on this save
@@ -838,7 +981,8 @@ namespace Dnd
     static bool SaveForDamage(Unit* caster, Unit* target, SpellInfo const* spell, Ability a, Dice dice, DmgType type, bool halfOnSave,
         std::string const& what)
     {
-        int dc = caster->IsPlayer() ? SpellSaveDC(caster->ToPlayer()) : 12;
+        int dc = caster->IsPlayer() ? SpellSaveDC(caster->ToPlayer()) : (caster->ToCreature() ?
+            (sCreatureScrollDc ? sCreatureScrollDc : CreatureSpellDC(caster->ToCreature())) : 12);
         if (caster->IsPlayer() && spell && (IsArrow(spell->Id) || IsGrenade(spell->Id)))
             dc = 13;                             // a grenade's (or an arrow's arc) is its own: DC 13 whoever throws it
         if (Player* pc = caster->ToPlayer())
@@ -1041,9 +1185,8 @@ namespace Dnd
             default:                            w.type = DMG_BLUDGEONING; break;
         }
         w.proficient = ClassProficient(GetSheet(p).cls, t->SubClass);
-        if (p->getRace() == RACE_DWARF && (t->SubClass == ITEM_SUBCLASS_WEAPON_AXE || t->SubClass == ITEM_SUBCLASS_WEAPON_AXE2 ||
-            t->SubClass == ITEM_SUBCLASS_WEAPON_MACE || t->SubClass == ITEM_SUBCLASS_WEAPON_MACE2))
-            w.proficient = true;             // Dwarven Combat Training: battleaxes, handaxes, hammers
+        if (RacialWeapon(p, t->SubClass))
+            w.proficient = true;             // Dwarven Combat Training (axes, hammers), Civil Militia (spears, polearms)
         if (HasFeat(p, "Weapon Master"))
             w.proficient = true;
         if (w.ability == DEX && AbilityMod(p, STR) > AbilityMod(p, DEX))
@@ -1552,7 +1695,10 @@ namespace Dnd
             id == SPELL_ENTANGLE || id == SPELL_MOONBEAM || id == SPELL_CALL_LIGHTNING || id == SPELL_BARKSKIN ||
             id == SPELL_WITCH_BOLT || id == SPELL_HEROISM || id == SPELL_CLOUD_OF_DAGGERS || id == SPELL_WEB || id == SPELL_BLUR ||
             id == SPELL_FEAR || id == SPELL_STINKING_CLOUD || id == SPELL_HUNGER_OF_HADAR || id == SPELL_SLEET_STORM ||
-            id == SPELL_BLESS || id == SPELL_SHIELD_OF_FAITH || id == SPELL_SPIRIT_GUARDIANS;
+            id == SPELL_BLESS || id == SPELL_SHIELD_OF_FAITH || id == SPELL_SPIRIT_GUARDIANS || id == SPELL_CREATE_BONFIRE ||
+            id == SPELL_HIDEOUS_LAUGHTER || id == SPELL_BANE || id == SPELL_FLAMING_SPHERE || id == SPELL_RAY_OF_ENFEEBLEMENT ||
+            id == SPELL_HASTE || id == SPELL_SLOW || id == SPELL_AURA_OF_VITALITY || id == SPELL_BANISHMENT ||
+            id == SPELL_GREATER_INVISIBILITY || id == SPELL_STONESKIN || id == SPELL_BLACK_TENTACLES || id == SPELL_PHANTASMAL_KILLER;
     }
 
     bool ConcentrationLive(Encounter const& e, Combatant const& caster)
@@ -1560,7 +1706,7 @@ namespace Dnd
         if (!caster.concentration)
             return false;
         if (caster.concentration == SPELL_HEX || caster.concentration == SPELL_CALL_LIGHTNING || caster.concentration == SPELL_BARKSKIN ||
-            caster.concentration == SPELL_BLUR)
+            caster.concentration == SPELL_BLUR || caster.concentration == SPELL_AURA_OF_VITALITY)
             return true;                         // a hex outlives its target (it can be moved); the storm, bark and blur last
         for (Area const& a : e.areas)            // the lasting areas: Moonbeam, Cloud of Daggers, the clouds and storms
             if (a.spellId == caster.concentration && a.owner == caster.guid)
@@ -1581,7 +1727,16 @@ namespace Dnd
                 (caster.concentration == SPELL_FEAR && o.afraid && o.afraidBy == caster.guid) ||
                 (caster.concentration == SPELL_HEROISM && o.heroismBy == caster.guid) ||
                 (caster.concentration == SPELL_BLESS && o.blessedBy == caster.guid) ||
-                (caster.concentration == SPELL_SHIELD_OF_FAITH && o.faithBy == caster.guid)))
+                (caster.concentration == SPELL_SHIELD_OF_FAITH && o.faithBy == caster.guid) ||
+                (caster.concentration == SPELL_HIDEOUS_LAUGHTER && o.laughingBy == caster.guid) ||
+                (caster.concentration == SPELL_BANE && o.banedBy == caster.guid) ||
+                (caster.concentration == SPELL_RAY_OF_ENFEEBLEMENT && o.enfeebledBy == caster.guid) ||
+                (caster.concentration == SPELL_HASTE && o.hastedBy == caster.guid) ||
+                (caster.concentration == SPELL_SLOW && o.slowBy == caster.guid) ||
+                (caster.concentration == SPELL_BANISHMENT && o.banishedBy == caster.guid) ||
+                (caster.concentration == SPELL_GREATER_INVISIBILITY && o.invisibleBy == caster.guid) ||
+                (caster.concentration == SPELL_STONESKIN && o.stoneskinBy == caster.guid) ||
+                (caster.concentration == SPELL_PHANTASMAL_KILLER && o.killerBy == caster.guid)))
                 return true;
         return false;
     }
@@ -1610,6 +1765,19 @@ namespace Dnd
             case SPELL_BLESS:       return "Bless";
             case SPELL_SHIELD_OF_FAITH: return "Shield of Faith";
             case SPELL_SPIRIT_GUARDIANS: return "Spirit Guardians";
+            case SPELL_CREATE_BONFIRE: return "Create Bonfire";
+            case SPELL_HIDEOUS_LAUGHTER: return "Hideous Laughter";
+            case SPELL_BANE:        return "Bane";
+            case SPELL_FLAMING_SPHERE: return "Flaming Sphere";
+            case SPELL_RAY_OF_ENFEEBLEMENT: return "Ray of Enfeeblement";
+            case SPELL_HASTE:       return "Haste";
+            case SPELL_SLOW:        return "Slow";
+            case SPELL_AURA_OF_VITALITY: return "Aura of Vitality";
+            case SPELL_BANISHMENT:  return "Banishment";
+            case SPELL_GREATER_INVISIBILITY: return "Greater Invisibility";
+            case SPELL_STONESKIN:   return "Stoneskin";
+            case SPELL_BLACK_TENTACLES: return "Black Tentacles";
+            case SPELL_PHANTASMAL_KILLER: return "Phantasmal Killer";
             default:                return "a spell";
         }
     }
@@ -1643,7 +1811,7 @@ namespace Dnd
                 o.entranced = false;
                 o.entrancedBy.Clear();
             }
-            if ((spell == SPELL_ENTANGLE || spell == SPELL_WEB) && o.restrainedBy == me->guid)
+            if ((spell == SPELL_ENTANGLE || spell == SPELL_WEB || spell == SPELL_BLACK_TENTACLES) && o.restrainedBy == me->guid)
             {
                 o.restrained = false;
                 o.restrainedBy.Clear();
@@ -1659,6 +1827,43 @@ namespace Dnd
                 o.blessedBy.Clear();
             if (spell == SPELL_SHIELD_OF_FAITH && o.faithBy == me->guid)
                 o.faithBy.Clear();
+            if (spell == SPELL_HIDEOUS_LAUGHTER && o.laughingBy == me->guid)
+                o.laughingBy.Clear();            // (still on the ground: getting up is its next turn)
+            if (spell == SPELL_BANE && o.banedBy == me->guid)
+                o.banedBy.Clear();
+            if (spell == SPELL_RAY_OF_ENFEEBLEMENT && o.enfeebledBy == me->guid)
+                o.enfeebledBy.Clear();
+            if (spell == SPELL_SLOW && o.slowBy == me->guid)
+                o.slowBy.Clear();
+            if (spell == SPELL_BANISHMENT && o.banishedBy == me->guid)
+            {
+                o.banishedBy.Clear();
+                o.banishLeft = 0;
+                if (o.alive && !o.gone)
+                    Narrate(caster, u, Acore::StringFormat("   {} is back.", o.name));
+            }
+            if (spell == SPELL_GREATER_INVISIBILITY && o.invisibleBy == me->guid)
+                o.invisibleBy.Clear();
+            if (spell == SPELL_STONESKIN && o.stoneskinBy == me->guid)
+                o.stoneskinBy.Clear();
+            if (spell == SPELL_PHANTASMAL_KILLER && o.killerBy == me->guid)
+            {
+                o.killerBy.Clear();
+                if (o.afraidBy == me->guid)
+                {
+                    o.afraid = false;
+                    o.afraidBy.Clear();
+                }
+            }
+            if (spell == SPELL_HASTE && o.hastedBy == me->guid)
+            {
+                o.hastedBy.Clear();
+                if (o.alive && !o.gone)
+                {
+                    o.lethargic = true;          // a wave of lethargy: its next turn is lost
+                    Narrate(caster, u, Acore::StringFormat("   The haste leaves {}: a wave of lethargy - they lose their next turn.", o.name));
+                }
+            }
             if (spell == SPELL_HEX && o.hexedBy == me->guid)
             {
                 o.hexedBy.Clear();
@@ -1681,7 +1886,7 @@ namespace Dnd
         PushOrder(*e);
     }
 
-    void ConcentrationCheck(Player* p, int damage, Unit* attacker)
+    void ConcentrationCheck(Unit* p, int damage, Unit* attacker)
     {
         Encounter* e = p && p->IsAlive() && damage > 0 ? EncounterOf(p->GetGUID()) : nullptr;
         Combatant* me = e ? e->Find(p->GetGUID()) : nullptr;
@@ -1695,7 +1900,7 @@ namespace Dnd
         }
         int dc = std::max(10, damage / 2);
         if (!SavingThrow(attacker ? attacker : p, p, CON, dc, false, Acore::StringFormat("Concentration ({})", SpellName(me->concentration)),
-            false, HasFeat(p, "War Caster")))
+            false, p->IsPlayer() && HasFeat(p->ToPlayer(), "War Caster")))
             EndConcentration(p, "");
     }
 
@@ -1782,6 +1987,74 @@ namespace Dnd
     }
 
     // ------------------------------------------------------------------ resolution
+    // the other side's combatants within r of a spot (a player's foes are the creatures; a creature's, the players still
+    // on their feet)
+    static std::vector<Unit*> FoesAt(Unit* caster, Position const& at, float r)
+    {
+        std::vector<Unit*> out;
+        bool mine = caster->IsPlayer();
+        if (Encounter* e = EncounterOf(caster->GetGUID()))
+            for (Combatant const& o : e->order)
+                if (o.player != mine && !o.gone && o.alive && !o.downed && o.banishedBy.IsEmpty())
+                    if (Unit* u = e->GetUnit(o); u && u->IsAlive() && u->GetExactDist2d(&at) <= r + u->GetCombatReach())
+                        out.push_back(u);
+        return out;
+    }
+
+    // one save, two kinds of damage, half of each on a success (Ice Storm); true when it saves
+    static bool SaveTwoDamages(Unit* caster, Unit* target, SpellInfo const* spell, Ability a, Dice d1, DmgType t1, Dice d2, DmgType t2,
+        std::string const& what)
+    {
+        int dc = caster->IsPlayer() ? SpellSaveDC(caster->ToPlayer()) : (caster->ToCreature() ?
+            (sCreatureScrollDc ? sCreatureScrollDc : CreatureSpellDC(caster->ToCreature())) : 12);
+        bool saved = SavingThrow(caster, target, a, dc, true, what);
+        for (auto const& [dice, type] : { std::make_pair(d1, t1), std::make_pair(d2, t2) })
+        {
+            if (!target->IsAlive())
+                break;
+            std::string detail;
+            int dmg = dice.Roll(false, detail);
+            if (saved)
+                dmg /= 2;
+            Narrate(caster, target, Acore::StringFormat("   {} takes {} = |cffffffff{}|r {}{}", Who(target), detail, dmg, DmgTypeNames[type],
+                saved ? " (halved)" : ""));
+            DamageCtx d;
+            d.attacker = caster;
+            d.victim = target;
+            d.amount = dmg;
+            d.type = type;
+            d.spell = spell;
+            ApplyDamage(d);
+        }
+        return saved;
+    }
+
+    // an attack roll with nothing to deal (Ray of Enfeeblement): true on a hit
+    static bool SpellAttackHits(Unit* attacker, Unit* target, std::string const& what, int bonus)
+    {
+        std::string why;
+        int adv = AttackAdv(attacker, target, false, why);
+        D20Result r = RollD20(bonus, adv);
+        int ac = ArmorClass(target);
+        bool hit = r.natural == 20 || (r.natural != 1 && r.total >= ac);
+        SendRoll(attacker, target, Acore::StringFormat("RA^{}^{}^{}^{}^{}^{}^{}^0^Force^{}^{}^0^0^", Clean(attacker->GetName()),
+            Clean(target->GetName()), Clean(what), r.natural, bonus, ac, hit ? 1 : (r.natural == 1 ? -1 : 0), adv, attacker->IsPlayer() ? 1 : 0));
+        Narrate(attacker, target, Acore::StringFormat("{} {} -> {}: {} vs AC {}{}  {}", Who(attacker), what, Who(target), r.text, ac,
+            why.empty() ? "" : " (" + why.substr(1, why.size() - 2) + ")", hit ? "|cff40ff40HIT|r" : "|cffaaaaaaMISS|r"));
+        return hit;
+    }
+
+    // Revivify: a friend who fell in this fight (a corpse, their spirit still with it)
+    static bool RevivifyTarget(Player* p, Unit* t)
+    {
+        Player* tp = t ? t->ToPlayer() : nullptr;
+        if (!tp || tp == p || tp->IsAlive() || tp->HasPlayerFlag(PLAYER_FLAGS_GHOST))   // (released: gone to Brother Marrow)
+            return false;
+        Encounter* e = EncounterOf(p->GetGUID());
+        Combatant* tc = e ? e->Find(tp->GetGUID()) : nullptr;
+        return tc && !tc->alive && !tc->gone;
+    }
+
     void ResolveHit(Unit* caster, Unit* target, SpellInfo const* spell)
     {
         if (!caster || !target || !spell)
@@ -1874,6 +2147,196 @@ namespace Dnd
             Narrate(p, target, Acore::StringFormat("{} {} -> {}: {} = |cff80ff80{}|r hit points", Who(p),
                 id == SPELL_HEALING_WORD ? "Healing Word" : "Cure Wounds", Who(target), detail, amount));
             ApplyHeal(p, target, amount, spell);
+            return;
+        }
+        if (p && id == SPELL_SANCTUARY)
+        {
+            if (Combatant* tc = CombatantOf(target->GetGUID()))
+            {
+                tc->sanctuaryBy = p->GetGUID();
+                Narrate(p, target, Acore::StringFormat("{} wards {} with |cfffff0c0Sanctuary|r: a foe that would attack them must first make a "
+                    "Wisdom save, or turn elsewhere. It ends if they attack or turn a spell on a foe.", Who(p), Who(target)));
+                if (Encounter* e = EncounterOf(target->GetGUID()))
+                    PushOrder(*e);
+            }
+            return;
+        }
+        if (p && id == SPELL_HASTE)
+        {
+            if (Combatant* tc = CombatantOf(target->GetGUID()))
+            {
+                tc->hastedBy = p->GetGUID();
+                if (target == p && IsTurnOf(p))
+                {
+                    tc->moveMax *= 2.f;              // this turn too
+                    if (tc->moved < tc->moveMax)
+                        SetRooted(p, false);
+                    PushEconomy(p);
+                }
+                Narrate(p, target, Acore::StringFormat("{} hastes {}: +2 Armour Class, double speed, advantage on DEX saves, and one more "
+                    "swing in the Attack action. When it ends, a wave of lethargy costs them a turn.", Who(p), Who(target)));
+                if (Encounter* e = EncounterOf(target->GetGUID()))
+                    PushOrder(*e);
+            }
+            return;
+        }
+        if (p && id == SPELL_AURA_OF_VITALITY)
+        {
+            std::string detail;
+            int amount = std::max(1, Dice{ 2, 6, HealBonus(p, 3) }.Roll(false, detail));
+            Narrate(p, target, Acore::StringFormat("{} Aura of Vitality -> {}: {} = |cff80ff80{}|r hit points (again on a later turn: a "
+                "Bonus Action, no slot, while you concentrate)", Who(p), Who(target), detail, amount));
+            ApplyHeal(p, target, amount, spell);
+            return;
+        }
+        if (p && id == SPELL_REVIVIFY)
+        {
+            Player* tp = target->ToPlayer();
+            if (!RevivifyTarget(p, target) || !tp)
+                return;
+            Combatant* tc = CombatantOf(tp->GetGUID());
+            tp->RemoveAurasDueToSpell(SPELL_FALLEN);
+            tp->ResurrectPlayer(0.01f);
+            tp->SpawnCorpseBones();
+            tp->SetHealth(1);
+            if (tc)
+            {
+                tc->alive = true;
+                tc->downed = tc->stable = false;
+                tc->saveOk = tc->saveFail = 0;
+                tc->prone = false;
+            }
+            Narrate(p, tp, Acore::StringFormat("{} speaks the words of |cfffff0c0Revivify|r: {} gasps back to life with 1 hit point.",
+                Who(p), Who(tp)));
+            PushSheet(tp);
+            if (Encounter* e = EncounterOf(p->GetGUID()))
+                PushOrder(*e);
+            return;
+        }
+        if (p && (id == SPELL_GREATER_INVISIBILITY || id == SPELL_STONESKIN || id == SPELL_DEATH_WARD))
+        {
+            if (Combatant* tc = CombatantOf(target->GetGUID()))
+            {
+                if (id == SPELL_GREATER_INVISIBILITY)
+                    tc->invisibleBy = p->GetGUID();
+                else if (id == SPELL_STONESKIN)
+                    tc->stoneskinBy = p->GetGUID();
+                else
+                    tc->deathWard = true;
+                Narrate(p, target, Acore::StringFormat(id == SPELL_GREATER_INVISIBILITY ? "{} turns {} |cffc0c0ffinvisible|r: their attacks "
+                    "have advantage, attacks on them disadvantage." : id == SPELL_STONESKIN ? "{} hardens {}'s skin to stone: bludgeoning, "
+                    "piercing and slashing damage halved." : "{} lays a |cfffff0c0Death Ward|r on {}: the first blow that would drop them "
+                    "leaves them standing at 1 hit point.", Who(p), Who(target)));
+                if (Encounter* e = EncounterOf(target->GetGUID()))
+                    PushOrder(*e);
+            }
+            return;
+        }
+        if (p && id == SPELL_DISPEL_MAGIC)
+        {
+            Combatant* tc = CombatantOf(target->GetGUID());
+            if (!tc)
+                return;
+            std::vector<std::string> ended;
+            if (tc->player)
+            {
+                // a friend: the spells laid on them end
+                if (tc->held && !tc->heldBy.IsEmpty())
+                {
+                    tc->held = false;
+                    tc->heldBy.Clear();
+                    ended.push_back("Held");
+                }
+                if (tc->restrained && !tc->restrainedBy.IsEmpty())
+                {
+                    tc->restrained = false;
+                    tc->restrainedBy.Clear();
+                    ended.push_back("Restrained");
+                }
+                if (tc->afraid)
+                {
+                    tc->afraid = false;
+                    tc->afraidBy.Clear();
+                    ended.push_back("Frightened");
+                }
+                if (tc->entranced || tc->asleep)
+                {
+                    if (tc->asleep)
+                        target->SetStandState(UNIT_STAND_STATE_STAND);
+                    tc->entranced = tc->asleep = false;
+                    tc->entrancedBy.Clear();
+                    ended.push_back("the enchantment");
+                }
+                if (tc->blinded)
+                {
+                    tc->blinded = tc->blindSave = false;
+                    tc->blindedBy.Clear();
+                    ended.push_back("Blinded");
+                }
+                if (!tc->laughingBy.IsEmpty())
+                {
+                    tc->laughingBy.Clear();
+                    ended.push_back("the laughter");
+                }
+                if (tc->commanded)
+                {
+                    tc->commanded = false;
+                    ended.push_back("the command");
+                }
+                if (!tc->killerBy.IsEmpty())
+                {
+                    tc->killerBy.Clear();
+                    tc->afraid = false;
+                    tc->afraidBy.Clear();
+                    ended.push_back("the nightmare");
+                }
+                if (!tc->banishedBy.IsEmpty())
+                {
+                    tc->banishedBy.Clear();
+                    tc->banishLeft = 0;
+                    ended.push_back("the banishment");
+                }
+                for (ObjectGuid* g : { &tc->banedBy, &tc->slowBy, &tc->enfeebledBy, &tc->outlinedBy })
+                    if (!g->IsEmpty())
+                    {
+                        g->Clear();
+                        ended.push_back("a curse");
+                    }
+                tc->outlined = false;
+            }
+            else
+            {
+                // a foe: the spell it holds, and the spells on it
+                if (tc->concentration)
+                {
+                    ended.push_back(SpellName(tc->concentration));
+                    EndConcentration(target, " - dispelled");
+                }
+                if (tc->images)
+                {
+                    tc->images = 0;
+                    ended.push_back("Mirror Image");
+                }
+                if (tc->fireShield || tc->deathWard)
+                {
+                    tc->fireShield = tc->deathWard = false;
+                    ended.push_back("a ward");
+                }
+                for (ObjectGuid* g : { &tc->blessedBy, &tc->faithBy, &tc->hastedBy, &tc->sanctuaryBy, &tc->invisibleBy, &tc->stoneskinBy })
+                    if (!g->IsEmpty())
+                    {
+                        g->Clear();
+                        ended.push_back("a blessing");
+                    }
+                tc->bladeWard = false;
+            }
+            std::string list;
+            for (std::string const& n : ended)
+                list += (list.empty() ? "" : ", ") + n;
+            Narrate(p, target, ended.empty() ? Acore::StringFormat("{} Dispel Magic on {}: nothing there to unravel.", Who(p), Who(target))
+                : Acore::StringFormat("{} Dispel Magic on {}: |cffd080ff{}|r unravelled.", Who(p), Who(target), list));
+            if (Encounter* e = EncounterOf(target->GetGUID()))
+                PushOrder(*e);
             return;
         }
         if (!p || target == caster)
@@ -2346,6 +2809,266 @@ namespace Dnd
                         }
                 }
                 break;
+            case SPELL_THORN_WHIP:
+                if (AttackRoll(p, target, "Thorn Whip", atk, Dice{ cd, 6, 0 }, DMG_PIERCING, spell, false, false) && target->IsAlive())
+                {
+                    float pull = std::min(3.f, std::max(0.f, p->GetExactDist(target) - MeleeRange(p, target)));
+                    if (pull > 0.2f)
+                    {
+                        PushAway(p, target, -pull);
+                        Narrate(p, target, Acore::StringFormat("   {} is yanked {:.1f} m closer.", Who(target), pull));
+                    }
+                }
+                break;
+            case SPELL_FROSTBITE:
+                if (!SaveForDamage(p, target, spell, CON, Dice{ cd, 6, 0 }, DMG_COLD, false, "Frostbite") && target->IsAlive())
+                    if (Combatant* fc = CombatantOf(target->GetGUID()))
+                    {
+                        fc->mocked = true;
+                        Narrate(p, target, Acore::StringFormat("   {} is numbed: disadvantage on its next attack.", Who(target)));
+                    }
+                break;
+            case SPELL_MIND_SLIVER:
+                if (!SaveForDamage(p, target, spell, INT, Dice{ cd, 6, 0 }, DMG_PSYCHIC, false, "Mind Sliver") && target->IsAlive())
+                    if (Combatant* mc = CombatantOf(target->GetGUID()))
+                    {
+                        mc->sliverBy = p->GetGUID();
+                        Narrate(p, target, Acore::StringFormat("   {}'s thoughts splinter: -1d4 on its next save before your next turn.",
+                            Who(target)));
+                    }
+                break;
+            case SPELL_INFESTATION:
+                if (!SaveForDamage(p, target, spell, CON, Dice{ cd, 6, 0 }, DMG_POISON, false, "Infestation") && target->IsAlive())
+                {
+                    float ang = float(urand(0, 359)) * float(M_PI) / 180.f;
+                    float x = target->GetPositionX() + std::cos(ang) * 1.5f;
+                    float y = target->GetPositionY() + std::sin(ang) * 1.5f;
+                    float z = target->GetPositionZ();
+                    target->UpdateGroundPositionZ(x, y, z);
+                    ShoveTo(target, x, y, z);
+                    Narrate(p, target, Acore::StringFormat("   The mites drive {} 1.5 m.", Who(target)));
+                }
+                break;
+            case SPELL_PRIMAL_SAVAGERY:
+                AttackRoll(p, target, "Primal Savagery", atk, Dice{ cd, 10, 0 }, DMG_ACID, spell, true, false);
+                break;
+            case SPELL_COMMAND:
+                if (AbilityScore(target, INT) <= 3)
+                {
+                    Narrate(p, target, Acore::StringFormat("   {} can't understand a command - no effect.", Who(target)));
+                    break;
+                }
+                if (!SavingThrow(p, target, WIS, SpellSaveDC(p), true, "Command"))
+                    if (Combatant* cc = CombatantOf(target->GetGUID()))
+                    {
+                        cc->commanded = true;
+                        Narrate(p, target, Acore::StringFormat("   \"|cffffd100Halt!|r\" {} must obey: it loses its next turn.", Who(target)));
+                        if (Encounter* e = EncounterOf(target->GetGUID()))
+                            PushOrder(*e);
+                    }
+                break;
+            case SPELL_HIDEOUS_LAUGHTER:
+                if (AbilityScore(target, INT) <= 4)
+                {
+                    Narrate(p, target, Acore::StringFormat("   {} doesn't get the joke - no effect.", Who(target)));
+                    break;
+                }
+                if (!SavingThrow(p, target, WIS, SpellSaveDC(p), true, "Hideous Laughter"))
+                    if (Combatant* lc = CombatantOf(target->GetGUID()))
+                    {
+                        lc->laughingBy = p->GetGUID();
+                        KnockProne(p, target);
+                        Narrate(p, target, Acore::StringFormat("   {} collapses in |cffffd100helpless laughter|r: prone, and its turns are lost "
+                            "until it saves (WIS, each turn).", Who(target)));
+                    }
+                break;
+            case SPELL_BANE:
+            {
+                int lvl = CastLevel(p, 1);
+                std::vector<Unit*> who{ target };
+                std::vector<Unit*> others = FoesAt(p, target->GetPosition(), 9.f);
+                std::sort(others.begin(), others.end(), [target](Unit* x, Unit* y) { return x->GetExactDist(target) < y->GetExactDist(target); });
+                for (Unit* o : others)
+                    if (o != target && int(who.size()) < 2 + lvl)
+                        who.push_back(o);
+                Narrate(p, target, Acore::StringFormat("{} Bane: {} must resist.", Who(p), who.size()));
+                for (Unit* u : who)
+                    if (!SavingThrow(p, u, CHA, SpellSaveDC(p), true, "Bane"))
+                        if (Combatant* bc = CombatantOf(u->GetGUID()))
+                        {
+                            bc->banedBy = p->GetGUID();
+                            Narrate(p, u, Acore::StringFormat("   {} is |cffa080ffbaned|r: -1d4 on its attacks and saves.", Who(u)));
+                        }
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
+            }
+            case SPELL_CATAPULT:
+                SaveForDamage(p, target, spell, DEX, Dice{ CastLevel(p, 1) + 2, 8, 0 }, DMG_BLUDGEONING, false, "Catapult");
+                break;
+            case SPELL_CHAOS_BOLT:
+            {
+                // 2d8 + 1d6 (+1d6 a slot level above 1st); the first d8 picks the type; a double leaps to another foe within
+                // 9 m (each creature once)
+                static DmgType const kinds[8] = { DMG_ACID, DMG_COLD, DMG_FIRE, DMG_FORCE, DMG_LIGHTNING, DMG_POISON, DMG_PSYCHIC,
+                    DMG_THUNDER };
+                int lvl = CastLevel(p, 1);
+                std::vector<ObjectGuid> struck;
+                Unit* at = target;
+                for (int leap = 0; leap < 6 && at && at->IsAlive(); ++leap)
+                {
+                    struck.push_back(at->GetGUID());
+                    int a = D(8), b = D(8);
+                    DmgType t = kinds[a - 1];
+                    Narrate(p, at, Acore::StringFormat("   Chaos Bolt's d8s: {} and {} - {}{}", a, b, DmgTypeNames[t],
+                        a == b ? " (a double: it will leap)" : ""));
+                    AttackRoll(p, at, leap ? "Chaos Bolt (leap)" : "Chaos Bolt", atk, Dice{ lvl, 6, a + b }, t, spell, false, false);
+                    if (a != b)
+                        break;
+                    Unit* next = nullptr;
+                    for (Unit* o : FoesAt(p, at->GetPosition(), 9.f))
+                        if (std::find(struck.begin(), struck.end(), o->GetGUID()) == struck.end() &&
+                            (!next || o->GetExactDist(at) < next->GetExactDist(at)))
+                            next = o;
+                    at = next;
+                }
+                break;
+            }
+            case SPELL_SPIRITUAL_WEAPON:
+            {
+                Combatant* me = CombatantOf(p->GetGUID());
+                if (me && !me->spiritWeapon)
+                    Narrate(p, target, Acore::StringFormat("{} calls up a spectral weapon: it stays for the fight, and strikes again for a "
+                        "Bonus Action and no slot.", Who(p)));
+                if (me)
+                    me->spiritWeapon = true;
+                AttackRoll(p, target, "Spiritual Weapon", atk, Dice{ 1, 8, CastingMod(p) }, DMG_FORCE, spell, true, false);
+                break;
+            }
+            case SPELL_ACID_ARROW:
+            {
+                int lvl = CastLevel(p, 2);
+                Dice now{ 4 + (lvl - 2), 4, 0 };
+                if (AttackRoll(p, target, "Acid Arrow", atk, now, DMG_ACID, spell, false, false))
+                {
+                    if (Combatant* ac = CombatantOf(target->GetGUID()); ac && target->IsAlive())
+                    {
+                        ac->acidDice = uint8(2 + (lvl - 2));
+                        ac->acidBy = p->GetGUID();
+                        Narrate(p, target, Acore::StringFormat("   The acid keeps eating: {}d4 more at the start of its next turn.",
+                            int(ac->acidDice)));
+                    }
+                }
+                else if (target->IsAlive())
+                {
+                    std::string detail;
+                    DamageCtx d;
+                    d.attacker = p;
+                    d.victim = target;
+                    d.amount = now.Roll(false, detail) / 2;
+                    d.type = DMG_ACID;
+                    d.spell = spell;
+                    Narrate(p, target, Acore::StringFormat("   The acid splashes it anyway: {} halved = |cffffffff{}|r Acid", detail, d.amount));
+                    ApplyDamage(d);
+                }
+                break;
+            }
+            case SPELL_BLINDNESS:
+                if (!SavingThrow(p, target, CON, SpellSaveDC(p), true, "Blindness"))
+                    if (Combatant* bc = CombatantOf(target->GetGUID()))
+                    {
+                        bc->blinded = true;
+                        bc->blindedBy = p->GetGUID();
+                        bc->blindSave = true;
+                        Narrate(p, target, Acore::StringFormat("   {} is |cffc0c0c0blinded|r: its attacks at disadvantage, attacks on it at "
+                            "advantage (a CON save at the start of each of its turns).", Who(target)));
+                        if (Encounter* e = EncounterOf(target->GetGUID()))
+                            PushOrder(*e);
+                    }
+                break;
+            case SPELL_MIND_SPIKE:
+                SaveForDamage(p, target, spell, WIS, Dice{ CastLevel(p, 2) + 1, 8, 0 }, DMG_PSYCHIC, true, "Mind Spike");
+                break;
+            case SPELL_SNOWBALL_SWARM:   // everything in the 3 m burst (the spell's area finds them)
+                SaveForDamage(p, target, spell, DEX, Dice{ CastLevel(p, 2) + 1, 6, 0 }, DMG_COLD, true, "Snowball Swarm");
+                break;
+            case SPELL_TIDAL_WAVE:       // everything the wave reaches
+                if (!SaveForDamage(p, target, spell, DEX, Dice{ 4, 8, 0 }, DMG_BLUDGEONING, true, "Tidal Wave") && target->IsAlive())
+                    KnockProne(p, target);
+                break;
+            case SPELL_RAY_OF_ENFEEBLEMENT:
+                if (SpellAttackHits(p, target, "Ray of Enfeeblement", atk))
+                    if (Combatant* ec = CombatantOf(target->GetGUID()))
+                    {
+                        ec->enfeebledBy = p->GetGUID();
+                        Narrate(p, target, Acore::StringFormat("   {} is |cffa0a0a0enfeebled|r: its weapons deal half damage (a CON save at the "
+                            "start of each of its turns ends it).", Who(target)));
+                        if (Encounter* e = EncounterOf(target->GetGUID()))
+                            PushOrder(*e);
+                    }
+                break;
+            case SPELL_ICE_STORM:        // everything in the 6 m storm
+                SaveTwoDamages(p, target, spell, DEX, Dice{ 2 + (CastLevel(p, 4) - 4), 8, 0 }, DMG_BLUDGEONING, Dice{ 4, 6, 0 }, DMG_COLD,
+                    "Ice Storm");
+                break;
+            case SPELL_BLIGHT:
+                SaveForDamage(p, target, spell, CON, Dice{ 8 + (CastLevel(p, 4) - 4), 8, 0 }, DMG_NECROTIC, true, "Blight");
+                break;
+            case SPELL_VITRIOLIC_SPHERE: // everything in the 6 m burst
+                if (!SaveForDamage(p, target, spell, DEX, Dice{ 10 + 2 * (CastLevel(p, 4) - 4), 4, 0 }, DMG_ACID, true, "Vitriolic Sphere") &&
+                    target->IsAlive())
+                    if (Combatant* vc = CombatantOf(target->GetGUID()))
+                    {
+                        vc->acidDice = 5;
+                        vc->acidBy = p->GetGUID();
+                        Narrate(p, target, "   The acid clings: 5d4 more at the start of its next turn.");
+                    }
+                break;
+            case SPELL_BANISHMENT:
+                if (!SavingThrow(p, target, CHA, SpellSaveDC(p), true, "Banishment"))
+                    if (Combatant* bc = CombatantOf(target->GetGUID()))
+                    {
+                        bc->banishedBy = p->GetGUID();
+                        bc->banishLeft = 10;
+                        Narrate(p, target, Acore::StringFormat("   {} |cffd080ffvanishes|r to another plane - no turns, nothing reaches it - "
+                            "while you hold the spell (ten turns at most).", Who(target)));
+                        if (Encounter* e = EncounterOf(target->GetGUID()))
+                            PushOrder(*e);
+                    }
+                break;
+            case SPELL_PHANTASMAL_KILLER:
+                if (!SavingThrow(p, target, WIS, SpellSaveDC(p), true, "Phantasmal Killer"))
+                    if (Combatant* kc = CombatantOf(target->GetGUID()))
+                    {
+                        kc->afraid = true;
+                        kc->afraidBy = p->GetGUID();
+                        kc->killerBy = p->GetGUID();
+                        Narrate(p, target, Acore::StringFormat("   {} sees its deepest fear: |cffc080ffterrified|r, and each turn it fails a WIS "
+                            "save the nightmare deals 4d10 Psychic.", Who(target)));
+                    }
+                break;
+            case SPELL_SLOW:
+            {
+                std::vector<Unit*> who{ target };
+                std::vector<Unit*> others = FoesAt(p, target->GetPosition(), 6.f);
+                std::sort(others.begin(), others.end(), [target](Unit* x, Unit* y) { return x->GetExactDist(target) < y->GetExactDist(target); });
+                for (Unit* o : others)
+                    if (o != target && who.size() < 6)
+                        who.push_back(o);
+                Narrate(p, target, Acore::StringFormat("{} Slow: {} must resist.", Who(p), who.size()));
+                for (Unit* u : who)
+                    if (!SavingThrow(p, u, WIS, SpellSaveDC(p), true, "Slow"))
+                        if (Combatant* sc = CombatantOf(u->GetGUID()))
+                        {
+                            sc->slowBy = p->GetGUID();
+                            sc->noReaction = true;
+                            Narrate(p, u, Acore::StringFormat("   {} is |cff8080ffslowed|r: -2 AC, half speed, no reactions, -2 on DEX saves "
+                                "(a WIS save at the start of each of its turns).", Who(u)));
+                        }
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
+            }
             default:
                 break;
         }
@@ -2436,6 +3159,23 @@ namespace Dnd
                 SaveForDamage(owner, u, info, WIS, Dice{ 3, 8, 0 }, DMG_RADIANT, true, "Spirit Guardians");
                 if (Combatant* uc = CombatantOf(u->GetGUID()))
                     uc->moveMax *= 0.5f;
+                return false;
+            case SPELL_CREATE_BONFIRE:
+                Narrate(owner, u, Acore::StringFormat("   {} starts its turn in the bonfire.", Who(u)));
+                SaveForDamage(owner, u, info, DEX, Dice{ CantripDice(owner), 8, 0 }, DMG_FIRE, false, "Create Bonfire");
+                return false;
+            case SPELL_BLACK_TENTACLES:
+                Narrate(owner, u, Acore::StringFormat("   {} starts its turn among the black tentacles.", Who(u)));
+                if (!SaveForDamage(owner, u, info, DEX, Dice{ 3, 6, 0 }, DMG_BLUDGEONING, false, "Black Tentacles") && u->IsAlive())
+                    if (Combatant* uc = CombatantOf(u->GetGUID()))
+                    {
+                        uc->restrained = true;
+                        uc->restrainedBy = owner->GetGUID();
+                    }
+                return false;
+            case SPELL_FLAMING_SPHERE:
+                Narrate(owner, u, Acore::StringFormat("   {} starts its turn beside the flaming sphere.", Who(u)));
+                SaveForDamage(owner, u, info, DEX, Dice{ 2, 6, 0 }, DMG_FIRE, true, "Flaming Sphere");
                 return false;
             default:
                 (void)info;
@@ -2631,6 +3371,73 @@ namespace Dnd
                 p->AddAura(SPELL_HIDDEN_AURA, p);
                 p->NearTeleportTo(x, y, z, ang);
                 Narrate(p, nullptr, Acore::StringFormat("{} steps through the shadows: {:.1f} m - the next attack has advantage.", Who(p), dist));
+                break;
+            }
+            case SPELL_CREATE_BONFIRE:
+            case SPELL_FLAMING_SPHERE:
+            {
+                bool sphere = spell->Id == SPELL_FLAMING_SPHERE;
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    e->areas.push_back(Area{ spell->Id, dest, 1.5f, uint32(GameTime::GetGameTimeMS().count()) + 60000u, p->GetGUID() });
+                std::vector<Unit*> caught = CreaturesNear(p, dest, 1.5f);
+                Narrate(p, nullptr, Acore::StringFormat("{} {}: {} - {} caught; whoever starts a turn {} it burns.", Who(p),
+                    sphere ? "Flaming Sphere" : "Create Bonfire", sphere ? "a roaring ball of fire" : "a bonfire springs up", caught.size(),
+                    sphere ? "beside" : "in"));
+                for (Unit* u : caught)
+                    SaveForDamage(p, u, spell, DEX, sphere ? Dice{ CastLevel(p, 2), 6, 0 } : Dice{ CantripDice(p), 8, 0 }, DMG_FIRE, sphere,
+                        sphere ? "Flaming Sphere" : "Create Bonfire");
+                break;
+            }
+            case SPELL_BLACK_TENTACLES:
+            {
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    e->areas.push_back(Area{ SPELL_BLACK_TENTACLES, dest, 6.f, uint32(GameTime::GetGameTimeMS().count()) + 60000u, p->GetGUID() });
+                std::vector<Unit*> caught = CreaturesNear(p, dest, 6.f);
+                Narrate(p, nullptr, Acore::StringFormat("{} Black Tentacles: writhing ebony limbs fill the ground - {} caught.", Who(p), caught.size()));
+                for (Unit* u : caught)
+                    if (!SaveForDamage(p, u, spell, DEX, Dice{ 3, 6, 0 }, DMG_BLUDGEONING, false, "Black Tentacles") && u->IsAlive())
+                        if (Combatant* uc = CombatantOf(u->GetGUID()))
+                        {
+                            uc->restrained = true;
+                            uc->restrainedBy = p->GetGUID();
+                            Narrate(p, u, Acore::StringFormat("   {} is |cff60c060restrained|r by the tentacles.", Who(u)));
+                        }
+                break;
+            }
+            case SPELL_DIMENSION_DOOR:
+            {
+                float ang = p->GetAngle(&dest);
+                Position to = p->GetFirstCollisionPosition(std::min(45.f, p->GetExactDist2d(&dest)), ang - p->GetOrientation());
+                float x = to.GetPositionX(), y = to.GetPositionY(), z = to.GetPositionZ();
+                float dist = p->GetExactDist2d(x, y);
+                if (Combatant* c = CombatantOf(p->GetGUID()))
+                {
+                    c->ignoreMoveUntil = GameTime::GetGameTimeMS().count() + 1000;
+                    c->lastPos.Relocate(x, y, z);
+                }
+                p->NearTeleportTo(x, y, z, ang);
+                Narrate(p, nullptr, Acore::StringFormat("{} opens a door through space and steps {:.1f} m.", Who(p), dist));
+                break;
+            }
+            case SPELL_THUNDER_STEP:
+            {
+                // gone in a clap of thunder: everything within 3 m of where you stood saves (CON) against 3d10
+                Position from = p->GetPosition();
+                std::vector<Unit*> caught = CreaturesNear(p, from, 3.f);
+                float ang = p->GetAngle(&dest);
+                Position to = p->GetFirstCollisionPosition(std::min(27.f, p->GetExactDist2d(&dest)), ang - p->GetOrientation());
+                float x = to.GetPositionX(), y = to.GetPositionY(), z = to.GetPositionZ();
+                float dist = p->GetExactDist2d(x, y);
+                if (Combatant* c = CombatantOf(p->GetGUID()))
+                {
+                    c->ignoreMoveUntil = GameTime::GetGameTimeMS().count() + 1000;
+                    c->lastPos.Relocate(x, y, z);
+                }
+                p->NearTeleportTo(x, y, z, ang);
+                Narrate(p, nullptr, Acore::StringFormat("{} vanishes in a crack of thunder and reappears {:.1f} m away - {} caught in the boom.",
+                    Who(p), dist, caught.size()));
+                for (Unit* u : caught)
+                    SaveForDamage(p, u, spell, CON, Dice{ CastLevel(p, 3), 10, 0 }, DMG_THUNDER, true, "Thunder Step");
                 break;
             }
             case SPELL_GREASE:
@@ -3054,6 +3861,84 @@ namespace Dnd
                 PushSheet(p);
                 break;
             }
+            case SPELL_WORD_OF_RADIANCE:
+            case SPELL_THUNDERCLAP:
+            {
+                bool radiance = spell->Id == SPELL_WORD_OF_RADIANCE;
+                std::vector<Unit*> caught;
+                for (Unit* u : FoesNear(p, 6.f))
+                    if (p->GetExactDist(u) <= MeleeRange(p, u))      // right beside you
+                        caught.push_back(u);
+                Narrate(p, nullptr, Acore::StringFormat("{} {}: {} - {} caught.", Who(p), radiance ? "Word of Radiance" : "Thunderclap",
+                    radiance ? "searing light bursts from them" : "a deafening crack", caught.size()));
+                for (Unit* u : caught)
+                    SaveForDamage(p, u, spell, CON, Dice{ CantripDice(p), 6, 0 }, radiance ? DMG_RADIANT : DMG_THUNDER, false,
+                        radiance ? "Word of Radiance" : "Thunderclap");
+                break;
+            }
+            case SPELL_BLADE_WARD:
+                if (c)
+                    c->bladeWard = true;
+                Narrate(p, nullptr, Acore::StringFormat("{} wards themselves against blades: bludgeoning, piercing and slashing damage halved "
+                    "until their next turn.", Who(p)));
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
+            case SPELL_EARTH_TREMOR:
+            {
+                int lvl = CastLevel(p, 1);
+                std::vector<Unit*> caught = FoesNear(p, 3.f);
+                Narrate(p, nullptr, Acore::StringFormat("{} Earth Tremor: the ground heaves - {} caught.", Who(p), caught.size()));
+                for (Unit* u : caught)
+                    if (!SaveForDamage(p, u, spell, DEX, Dice{ lvl, 6, 0 }, DMG_BLUDGEONING, false, "Earth Tremor") && u->IsAlive())
+                        KnockProne(p, u);
+                break;
+            }
+            case SPELL_COLOR_SPRAY:
+            {
+                // 6d10 (+2d10 a slot level above 1st) hit points' worth in a 4.5 m cone, weakest first: blinded to your next turn
+                int lvl = CastLevel(p, 1);
+                std::string detail;
+                int pool = Dice{ 6 + 2 * (lvl - 1), 10, 0 }.Roll(false, detail);
+                std::vector<Unit*> caught;
+                for (Unit* u : FoesNear(p, 4.5f))
+                    if (p->HasInArc(float(M_PI) / 3.f, u))
+                        caught.push_back(u);
+                std::sort(caught.begin(), caught.end(), [](Unit* x, Unit* y) { return x->GetHealth() < y->GetHealth(); });
+                Narrate(p, nullptr, Acore::StringFormat("{} Color Spray: {} = {} hit points' worth of dazzling colour.", Who(p), detail, pool));
+                for (Unit* u : caught)
+                {
+                    if (int(u->GetHealth()) > pool)
+                        break;
+                    pool -= int(u->GetHealth());
+                    if (Combatant* uc = CombatantOf(u->GetGUID()))
+                    {
+                        uc->blinded = true;
+                        uc->blindedBy = p->GetGUID();
+                        uc->blindSave = false;
+                        Narrate(p, u, Acore::StringFormat("   {} is |cffc0c0c0blinded|r until your next turn.", Who(u)));
+                    }
+                }
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
+            }
+            case SPELL_FIRE_SHIELD:
+                if (c)
+                    c->fireShield = true;
+                Narrate(p, nullptr, Acore::StringFormat("{} wreathes themselves in a |cffff8040Fire Shield|r: cold damage halved, and 2d8 Fire "
+                    "to anything that hits them in melee.", Who(p)));
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
+            case SPELL_MIRROR_IMAGE:
+                if (c)
+                    c->images = 3;
+                Narrate(p, nullptr, Acore::StringFormat("Three illusory doubles of {} appear: an attack on them may strike a double instead.",
+                    Who(p)));
+                if (Encounter* e = EncounterOf(p->GetGUID()))
+                    PushOrder(*e);
+                break;
             case SPELL_ACTION_SURGE:
                 if (c)
                 {
@@ -3071,10 +3956,1122 @@ namespace Dnd
         }
     }
 
+
+    // ------------------------------------------------------------------ spells at the start of a turn
+    // the caster's own short-lived spells run out as their next turn comes (Mind Sliver, Color Spray); Blade Ward is
+    // over; Haste doubles the turn's movement, Slow halves it and takes the reaction
+    void SpellTurnReset(Encounter& e, Combatant& c)
+    {
+        for (Combatant& o : e.order)
+        {
+            if (o.sliverBy == c.guid)
+                o.sliverBy.Clear();
+            if (o.blinded && !o.blindSave && o.blindedBy == c.guid)
+            {
+                o.blinded = false;
+                o.blindedBy.Clear();
+            }
+        }
+        c.bladeWard = false;
+        if (!c.hastedBy.IsEmpty() && Held(c.hastedBy, SPELL_HASTE))
+            c.moveMax *= 2.f;
+        if (!c.slowBy.IsEmpty() && Held(c.slowBy, SPELL_SLOW))
+        {
+            c.moveMax *= 0.5f;
+            c.noReaction = true;
+        }
+    }
+
+    static Unit* FightUnit(Encounter& e, ObjectGuid g)
+    {
+        if (g.IsEmpty())
+            return nullptr;
+        for (Combatant const& o : e.order)
+            if (o.guid == g && !o.gone)
+                return e.GetUnit(o);
+        return nullptr;
+    }
+
+    // acid still eating, the saves against what was laid on it, the lost turns (lethargy, a command, the laughter); true
+    // if the turn is lost (or it died)
+    bool SpellTurnStart(Encounter& e, Combatant& c, Unit* u)
+    {
+        if (c.acidDice)
+        {
+            std::string detail;
+            DamageCtx d;
+            d.attacker = FightUnit(e, c.acidBy);
+            d.victim = u;
+            d.amount = Dice{ c.acidDice, 4, 0 }.Roll(false, detail);
+            d.type = DMG_ACID;
+            c.acidDice = 0;
+            c.acidBy.Clear();
+            Narrate(u, nullptr, Acore::StringFormat("   The acid keeps eating at {}: {} = |cffffffff{}|r Acid", Who(u), detail, d.amount));
+            ApplyDamage(d);
+            if (!u->IsAlive() || e.phase == Encounter::PHASE_DONE)
+                return true;
+        }
+        auto save = [&](Ability a, ObjectGuid by, char const* what)
+        {
+            Unit* src = FightUnit(e, by);
+            return SavingThrow(src ? src : u, u, a, ConditionDC(by), true, what);
+        };
+        if (c.blinded && c.blindSave && save(CON, c.blindedBy, "Blindness"))
+        {
+            c.blinded = c.blindSave = false;
+            c.blindedBy.Clear();
+            Narrate(u, nullptr, Acore::StringFormat("   {} can see again.", Who(u)));
+        }
+        if (!c.slowBy.IsEmpty() && (!Held(c.slowBy, SPELL_SLOW) || save(WIS, c.slowBy, "Slow")))
+        {
+            c.slowBy.Clear();
+            Narrate(u, nullptr, Acore::StringFormat("   {} shakes off the slowness.", Who(u)));
+        }
+        if (!c.enfeebledBy.IsEmpty() && (!Held(c.enfeebledBy, SPELL_RAY_OF_ENFEEBLEMENT) || save(CON, c.enfeebledBy, "Ray of Enfeeblement")))
+        {
+            c.enfeebledBy.Clear();
+            Narrate(u, nullptr, Acore::StringFormat("   {}'s strength comes back.", Who(u)));
+        }
+        if (c.player && c.restrained && !c.restrainedBy.IsEmpty() && save(STR, c.restrainedBy, "breaking free"))
+        {
+            c.restrained = false;
+            c.restrainedBy.Clear();
+            c.moveMax = c.player ? Speed(u->ToPlayer()) : c.moveMax;
+            Narrate(u, nullptr, Acore::StringFormat("   {} tears free.", Who(u)));
+        }
+        if (c.player && c.afraid && save(WIS, c.afraidBy, "Fear"))
+        {
+            c.afraid = false;
+            c.afraidBy.Clear();
+            Narrate(u, nullptr, Acore::StringFormat("   {} masters their fear.", Who(u)));
+        }
+        if (!c.hastedBy.IsEmpty() && !Held(c.hastedBy, SPELL_HASTE))
+            c.hastedBy.Clear();
+        if (!c.banishedBy.IsEmpty())
+        {
+            if (!Held(c.banishedBy, SPELL_BANISHMENT) || c.banishLeft <= 1)
+            {
+                c.banishedBy.Clear();
+                c.banishLeft = 0;
+                Narrate(u, nullptr, Acore::StringFormat("{} comes back from wherever it was sent.", Who(u)));
+            }
+            else
+            {
+                --c.banishLeft;
+                Narrate(u, nullptr, Acore::StringFormat("{} is still |cffd080ffbanished|r.", Who(u)));
+                return true;
+            }
+        }
+        if (!c.killerBy.IsEmpty())
+        {
+            if (!Held(c.killerBy, SPELL_PHANTASMAL_KILLER))
+                c.killerBy.Clear();
+            else if (save(WIS, c.killerBy, "Phantasmal Killer"))
+            {
+                c.killerBy.Clear();
+                if (c.afraid)
+                {
+                    c.afraid = false;
+                    c.afraidBy.Clear();
+                }
+                Narrate(u, nullptr, Acore::StringFormat("   {} tears free of the nightmare.", Who(u)));
+            }
+            else
+            {
+                std::string detail;
+                DamageCtx d;
+                d.attacker = FightUnit(e, c.killerBy);
+                d.victim = u;
+                d.amount = Dice{ 4, 10, 0 }.Roll(false, detail);
+                d.type = DMG_PSYCHIC;
+                Narrate(u, nullptr, Acore::StringFormat("   The nightmare claws at {}: {} = |cffffffff{}|r Psychic", Who(u), detail, d.amount));
+                ApplyDamage(d);
+                if (!u->IsAlive() || e.phase == Encounter::PHASE_DONE)
+                    return true;
+            }
+        }
+        if (c.lethargic)
+        {
+            c.lethargic = false;
+            Narrate(u, nullptr, Acore::StringFormat("{} is |cffaaaaaalethargic|r as the haste drains away, and loses the turn.", Who(u)));
+            return true;
+        }
+        if (c.commanded)
+        {
+            c.commanded = false;
+            Narrate(u, nullptr, Acore::StringFormat("{} obeys the command - \"|cffffd100Halt!|r\" - and loses the turn.", Who(u)));
+            return true;
+        }
+        if (!c.laughingBy.IsEmpty())
+        {
+            if (!Held(c.laughingBy, SPELL_HIDEOUS_LAUGHTER))
+                c.laughingBy.Clear();
+            else if (save(WIS, c.laughingBy, "Hideous Laughter"))
+            {
+                c.laughingBy.Clear();
+                c.prone = false;
+                u->SetStandState(UNIT_STAND_STATE_STAND);
+                Narrate(u, nullptr, Acore::StringFormat("   {} wheezes to a stop and gets up.", Who(u)));
+            }
+            else
+            {
+                Narrate(u, nullptr, Acore::StringFormat("{} is still |cffffd100helpless with laughter|r and loses the turn.", Who(u)));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // a creature about to attack someone under Sanctuary: a WIS save, or it can't (true: the ward holds)
+    bool SanctuaryHolds(Creature* cr, Unit* ward)
+    {
+        Combatant* wc = ward ? CombatantOf(ward->GetGUID()) : nullptr;
+        if (!cr || !wc || wc->sanctuaryBy.IsEmpty())
+            return false;
+        Player* by = ObjectAccessor::FindPlayer(wc->sanctuaryBy);
+        bool saved = SavingThrow(by ? static_cast<Unit*>(by) : ward, cr, WIS, ConditionDC(wc->sanctuaryBy), true, "Sanctuary");
+        if (!saved)
+            Narrate(cr, ward, Acore::StringFormat("   {} can't bring itself to attack {}.", Who(cr), Who(ward)));
+        return !saved;
+    }
+
+    int ConditionDC(ObjectGuid by)
+    {
+        if (by.IsEmpty())
+            return 13;
+        if (Player* p = ObjectAccessor::FindPlayer(by))
+            return SpellSaveDC(p);
+        if (Encounter* e = EncounterOf(by))
+            if (Unit* u = FightUnit(*e, by))
+                if (Creature* cr = u->ToCreature())
+                    return CreatureSpellDC(cr);
+        return 13;
+    }
+
+    // ------------------------------------------------------------------ the casting creatures
+    // A creature's spells (its stat block's, tools/casters.py) are the players' spells, resolved here with its own
+    // numbers: DC 8 + proficiency + its best mental modifier, attack the same less 8. Cantrips are at will (two dice
+    // from CR 5); leveled spells a few times a fight, at their own level. CreaturePlanCast decides when.
+    enum CastShape : uint8 { SHP_ONE, SHP_SPOT, SHP_AROUND, SHP_CONE, SHP_LINE, SHP_ALLY, SHP_SELF };
+    enum CastRider : uint8 { RID_NONE, RID_SLOWED, RID_MOCKED, RID_SLIVER, RID_SICKEN, RID_GUIDED, RID_FRIGHT, RID_PRONE, RID_PUSH,
+        RID_COMMAND, RID_LAUGH, RID_HOLD, RID_RESTRAIN, RID_BLIND, RID_ENFEEBLE, RID_AFRAID, RID_ENTRANCE, RID_OUTLINE, RID_NOREACT,
+        RID_BANISH, RID_KILLER, RID_SPECIAL };
+    struct CastDef
+    {
+        uint32 id;
+        uint8 level;
+        CastShape shape;
+        float range, radius;
+        int8 save;                           // -1: a spell attack
+        bool melee;
+        uint8 n, sides;                      // the damage dice (0: none)
+        DmgType type;
+        bool half;                           // half on a save
+        CastRider rider;
+        bool conc;
+    };
+    static CastDef const sCasts[] =
+    {
+        //  spell                   lvl shape      range  radius save  melee  n  d   type             half   rider         conc
+        { SPELL_FIRE_BOLT,           0, SHP_ONE,   27.f, 0.f,  -1,   false, 1, 10, DMG_FIRE,        false, RID_NONE,     false },
+        { SPELL_RAY_OF_FROST,        0, SHP_ONE,   18.f, 0.f,  -1,   false, 1, 8,  DMG_COLD,        false, RID_SLOWED,   false },
+        { SPELL_CHILL_TOUCH,         0, SHP_ONE,   27.f, 0.f,  -1,   false, 1, 8,  DMG_NECROTIC,    false, RID_NONE,     false },
+        { SPELL_PRODUCE_FLAME,       0, SHP_ONE,   18.f, 0.f,  -1,   false, 1, 8,  DMG_FIRE,        false, RID_NONE,     false },
+        { SPELL_ELDRITCH_BLAST,      0, SHP_ONE,   27.f, 0.f,  -1,   false, 1, 10, DMG_FORCE,       false, RID_NONE,     false },
+        { SPELL_SACRED_FLAME,        0, SHP_ONE,   18.f, 0.f,  DEX,  false, 1, 8,  DMG_RADIANT,     false, RID_NONE,     false },
+        { SPELL_TOLL_THE_DEAD,       0, SHP_ONE,   18.f, 0.f,  WIS,  false, 1, 8,  DMG_NECROTIC,    false, RID_SPECIAL,  false },
+        { SPELL_VICIOUS_MOCKERY,     0, SHP_ONE,   18.f, 0.f,  WIS,  false, 1, 4,  DMG_PSYCHIC,     false, RID_MOCKED,   false },
+        { SPELL_FROSTBITE,           0, SHP_ONE,   18.f, 0.f,  CON,  false, 1, 6,  DMG_COLD,        false, RID_MOCKED,   false },
+        { SPELL_MIND_SLIVER,         0, SHP_ONE,   18.f, 0.f,  INT,  false, 1, 6,  DMG_PSYCHIC,     false, RID_SLIVER,   false },
+        { SPELL_POISON_SPRAY,        0, SHP_ONE,    3.f, 0.f,  CON,  false, 1, 12, DMG_POISON,      false, RID_NONE,     false },
+        { SPELL_INFESTATION,         0, SHP_ONE,    9.f, 0.f,  CON,  false, 1, 6,  DMG_POISON,      false, RID_NONE,     false },
+        { SPELL_ACID_SPLASH,         0, SHP_ONE,   18.f, 0.f,  DEX,  false, 1, 6,  DMG_ACID,        false, RID_NONE,     false },
+        { SPELL_THUNDERCLAP,         0, SHP_AROUND, 0.f, 2.f,  CON,  false, 1, 6,  DMG_THUNDER,     false, RID_NONE,     false },
+        { SPELL_WORD_OF_RADIANCE,    0, SHP_AROUND, 0.f, 2.f,  CON,  false, 1, 6,  DMG_RADIANT,     false, RID_NONE,     false },
+        { SPELL_MAGIC_MISSILE,       1, SHP_ONE,   18.f, 0.f,  -1,   false, 3, 4,  DMG_FORCE,       false, RID_SPECIAL,  false },
+        { SPELL_BURNING_HANDS,       1, SHP_CONE,   0.f, 5.f,  DEX,  false, 3, 6,  DMG_FIRE,        true,  RID_NONE,     false },
+        { SPELL_THUNDERWAVE,         1, SHP_AROUND, 0.f, 4.5f, CON,  false, 2, 8,  DMG_THUNDER,     true,  RID_PUSH,     false },
+        { SPELL_EARTH_TREMOR,        1, SHP_AROUND, 0.f, 3.f,  DEX,  false, 1, 6,  DMG_BLUDGEONING, false, RID_PRONE,    false },
+        { SPELL_ARMS_OF_HADAR,       1, SHP_AROUND, 0.f, 3.f,  STR,  false, 2, 6,  DMG_NECROTIC,    true,  RID_NOREACT,  false },
+        { SPELL_RAY_OF_SICKNESS,     1, SHP_ONE,   18.f, 0.f,  -1,   false, 2, 8,  DMG_POISON,      false, RID_SICKEN,   false },
+        { SPELL_GUIDING_BOLT,        1, SHP_ONE,   27.f, 0.f,  -1,   false, 4, 6,  DMG_RADIANT,     false, RID_GUIDED,   false },
+        { SPELL_INFLICT_WOUNDS,      1, SHP_ONE,    2.f, 0.f,  -1,   true,  3, 10, DMG_NECROTIC,    false, RID_NONE,     false },
+        { SPELL_CATAPULT,            1, SHP_ONE,   18.f, 0.f,  DEX,  false, 3, 8,  DMG_BLUDGEONING, false, RID_NONE,     false },
+        { SPELL_DISSONANT_WHISPERS,  1, SHP_ONE,   18.f, 0.f,  WIS,  false, 3, 6,  DMG_PSYCHIC,     true,  RID_FRIGHT,   false },
+        { SPELL_COMMAND,             1, SHP_ONE,   18.f, 0.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_COMMAND,  false },
+        { SPELL_HIDEOUS_LAUGHTER,    1, SHP_ONE,   18.f, 0.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_LAUGH,    true  },
+        { SPELL_BANE,                1, SHP_ONE,   18.f, 9.f,  CHA,  false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_FAERIE_FIRE,         1, SHP_ONE,   18.f, 0.f,  DEX,  false, 0, 0,  DMG_FORCE,       false, RID_OUTLINE,  true  },
+        { SPELL_SLEEP,               1, SHP_SPOT,  27.f, 6.f,  -1,   false, 5, 8,  DMG_FORCE,       false, RID_SPECIAL,  false },
+        { SPELL_ENTANGLE,            1, SHP_SPOT,  18.f, 6.f,  STR,  false, 0, 0,  DMG_FORCE,       false, RID_RESTRAIN, true  },
+        { SPELL_HEALING_WORD,        1, SHP_ALLY,  18.f, 0.f,  -1,   false, 1, 4,  DMG_FORCE,       false, RID_SPECIAL,  false },
+        { SPELL_CURE_WOUNDS,         1, SHP_ALLY,   2.f, 0.f,  -1,   false, 1, 8,  DMG_FORCE,       false, RID_SPECIAL,  false },
+        { SPELL_SHIELD_OF_FAITH,     1, SHP_ALLY,  18.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_SCORCHING_RAY,       2, SHP_ONE,   18.f, 0.f,  -1,   false, 2, 6,  DMG_FIRE,        false, RID_SPECIAL,  false },
+        { SPELL_SHATTER,             2, SHP_SPOT,  18.f, 3.f,  CON,  false, 3, 8,  DMG_THUNDER,     true,  RID_NONE,     false },
+        { SPELL_SNOWBALL_SWARM,      2, SHP_SPOT,  18.f, 3.f,  DEX,  false, 3, 6,  DMG_COLD,        true,  RID_NONE,     false },
+        { SPELL_WEB,                 2, SHP_SPOT,  18.f, 3.f,  DEX,  false, 0, 0,  DMG_FORCE,       false, RID_RESTRAIN, true  },
+        { SPELL_HOLD_PERSON,         2, SHP_ONE,   18.f, 0.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_HOLD,     true  },
+        { SPELL_BLINDNESS,           2, SHP_ONE,   18.f, 0.f,  CON,  false, 0, 0,  DMG_FORCE,       false, RID_BLIND,    false },
+        { SPELL_MIND_SPIKE,          2, SHP_ONE,   18.f, 0.f,  WIS,  false, 3, 8,  DMG_PSYCHIC,     true,  RID_NONE,     false },
+        { SPELL_ACID_ARROW,          2, SHP_ONE,   27.f, 0.f,  -1,   false, 4, 4,  DMG_ACID,        false, RID_SPECIAL,  false },
+        { SPELL_RAY_OF_ENFEEBLEMENT, 2, SHP_ONE,   18.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_ENFEEBLE, true  },
+        { SPELL_MIRROR_IMAGE,        2, SHP_SELF,   0.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  false },
+        { SPELL_BLUR,                2, SHP_SELF,   0.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_FIREBALL,            3, SHP_SPOT,  27.f, 6.f,  DEX,  false, 8, 6,  DMG_FIRE,        true,  RID_NONE,     false },
+        { SPELL_LIGHTNING_BOLT,      3, SHP_LINE,  30.f, 1.5f, DEX,  false, 8, 6,  DMG_LIGHTNING,   true,  RID_NONE,     false },
+        { SPELL_CALL_LIGHTNING,      3, SHP_SPOT,  27.f, 1.5f, DEX,  false, 3, 10, DMG_LIGHTNING,   true,  RID_NONE,     false },
+        { SPELL_TIDAL_WAVE,          3, SHP_SPOT,  18.f, 4.5f, DEX,  false, 4, 8,  DMG_BLUDGEONING, true,  RID_PRONE,    false },
+        { SPELL_HYPNOTIC_PATTERN,    3, SHP_SPOT,  18.f, 4.5f, WIS,  false, 0, 0,  DMG_FORCE,       false, RID_ENTRANCE, true  },
+        { SPELL_FEAR,                3, SHP_CONE,   0.f, 9.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_AFRAID,   true  },
+        { SPELL_SLOW,                3, SHP_ONE,   18.f, 6.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_VAMPIRIC_TOUCH,      3, SHP_ONE,    2.f, 0.f,  -1,   true,  3, 6,  DMG_NECROTIC,    false, RID_SPECIAL,  false },
+        { SPELL_ICE_STORM,           4, SHP_SPOT,  27.f, 6.f,  DEX,  false, 4, 6,  DMG_COLD,        true,  RID_SPECIAL,  false },
+        { SPELL_BLIGHT,              4, SHP_ONE,   18.f, 0.f,  CON,  false, 8, 8,  DMG_NECROTIC,    true,  RID_NONE,     false },
+        { SPELL_VITRIOLIC_SPHERE,    4, SHP_SPOT,  27.f, 6.f,  DEX,  false, 10, 4, DMG_ACID,        true,  RID_SPECIAL,  false },
+        { SPELL_BANISHMENT,          4, SHP_ONE,   18.f, 0.f,  CHA,  false, 0, 0,  DMG_FORCE,       false, RID_BANISH,   true  },
+        { SPELL_PHANTASMAL_KILLER,   4, SHP_ONE,   18.f, 0.f,  WIS,  false, 0, 0,  DMG_FORCE,       false, RID_KILLER,   true  },
+        { SPELL_BLACK_TENTACLES,     4, SHP_SPOT,  18.f, 6.f,  DEX,  false, 3, 6,  DMG_BLUDGEONING, false, RID_RESTRAIN, true  },
+        { SPELL_GREATER_INVISIBILITY, 4, SHP_SELF,  0.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_STONESKIN,           4, SHP_SELF,   0.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  true  },
+        { SPELL_FIRE_SHIELD,         4, SHP_SELF,   0.f, 0.f,  -1,   false, 0, 0,  DMG_FORCE,       false, RID_SPECIAL,  false },
+    };
+
+    // a potion a creature can drink (the shops' potions, tools/shops.py): its healing (count 0: not a potion)
+    static Dice PotionDice(uint32 item)
+    {
+        switch (item)
+        {
+            case 118:   return Dice{ 2, 4, 2 };      // Potion of Healing
+            case 858:   return Dice{ 4, 4, 4 };      // Greater
+            case 1710:  return Dice{ 8, 4, 8 };      // Superior
+            default:    return Dice{};
+        }
+    }
+
+    void RollCarried(Combatant& c, Creature* cr)
+    {
+        c.carrying.clear();
+        for (auto const& [item, chance] : StatsOrDefault(cr).carries)
+            if (roll_chance_i(chance))           // (not the d20s: a test's rigged dice stay on the rolls they were meant for)
+                c.carrying.push_back(item);
+    }
+
+    void CreatureDrops(Encounter& e, std::vector<Player*> const& takers)
+    {
+        if (takers.empty())
+            return;
+        for (Combatant& c : e.order)
+        {
+            if (c.player || c.extra || c.carrying.empty())
+                continue;
+            for (uint32 item : c.carrying)
+            {
+                Player* p = takers[urand(0, uint32(takers.size()) - 1)];
+                ItemTemplate const* t = sObjectMgr->GetItemTemplate(item);
+                std::string name = t ? t->Name1 : "something";
+                if (p->AddItem(item, 1))
+                    Narrate(p, nullptr, Acore::StringFormat("|cffffd100{} carried {} - {} takes it.|r", c.name, name, p->GetName()));
+                else
+                    Log(p, Acore::StringFormat("|cffff8040Your bags are full: {}'s {} stays behind.|r", c.name, name));
+            }
+            c.carrying.clear();
+        }
+    }
+
+    static CastDef const* FindCast(uint32 id)
+    {
+        for (CastDef const& d : sCasts)
+            if (d.id == id)
+                return &d;
+        return nullptr;
+    }
+
+    bool CanCreatureCast(uint32 spellId) { return FindCast(spellId) != nullptr; }
+
+    static int CreatureProf(Creature* c) { return StatsOrDefault(c).xp >= 1800 ? 3 : 2; }
+    static int CreatureCastMod(Creature* c)
+    {
+        return std::max(AbilityMod(c, INT), std::max(AbilityMod(c, WIS), AbilityMod(c, CHA)));
+    }
+    int CreatureSpellDC(Creature* c) { return 8 + CreatureProf(c) + CreatureCastMod(c); }
+    int CreatureSpellAttack(Creature* c) { return CreatureProf(c) + CreatureCastMod(c); }
+
+    // out of the fight already: held, asleep, entranced, stunned, laughing, commanded
+    static bool Helpless(Combatant const& t)
+    {
+        return t.held || t.asleep || t.entranced || t.stunned || !t.laughingBy.IsEmpty() || t.commanded || t.turned;
+    }
+
+    static bool Under(Combatant const& t, CastRider r)
+    {
+        switch (r)
+        {
+            case RID_HOLD:      return t.held;
+            case RID_COMMAND:   return t.commanded;
+            case RID_LAUGH:     return !t.laughingBy.IsEmpty();
+            case RID_BLIND:     return t.blinded;
+            case RID_RESTRAIN:  return t.restrained;
+            case RID_AFRAID:    return t.afraid;
+            case RID_ENTRANCE:  return t.entranced;
+            case RID_ENFEEBLE:  return !t.enfeebledBy.IsEmpty();
+            case RID_OUTLINE:   return t.outlined;
+            case RID_PRONE:     return t.prone;
+            case RID_BANISH:    return !t.banishedBy.IsEmpty();
+            case RID_KILLER:    return !t.killerBy.IsEmpty();
+            default:            return false;
+        }
+    }
+
+    // what a rider is worth to the caster, in damage-like points (a lost turn is worth a lot)
+    static float RiderValue(CastRider r)
+    {
+        switch (r)
+        {
+            case RID_HOLD: case RID_LAUGH: case RID_ENTRANCE: case RID_BANISH:      return 9.f;
+            case RID_KILLER:                                                        return 12.f;
+            case RID_COMMAND:                                                       return 6.f;
+            case RID_RESTRAIN: case RID_BLIND: case RID_AFRAID: case RID_ENFEEBLE:  return 5.f;
+            case RID_OUTLINE: case RID_SICKEN: case RID_PRONE:                      return 3.f;
+            case RID_SLOWED: case RID_MOCKED: case RID_SLIVER: case RID_GUIDED: case RID_FRIGHT: case RID_PUSH: case RID_NOREACT:
+                return 1.5f;
+            default:                                                                return 0.f;
+        }
+    }
+
+    static float AvgDice(Dice const& d) { return d.count * (d.sides + 1) / 2.f + d.bonus; }
+
+    bool CreaturePlanCast(Encounter& e, Creature* cr, bool beforeMove)
+    {
+        e.aiCast = -1;
+        Combatant* me = e.Find(cr->GetGUID());
+        CreatureStats const& s = StatsOrDefault(cr);
+        if (!me || (s.spells.empty() && me->carrying.empty()) || me->actionUsed)
+            return false;   // (a creature with no spells may still carry a potion or a scroll)
+        std::vector<Unit*> foes, friends;
+        std::vector<Combatant*> foeC;
+        for (Combatant& o : e.order)
+        {
+            if (o.gone || !o.alive)
+                continue;
+            Unit* u = e.GetUnit(o);
+            if (!u || !u->IsAlive())
+                continue;
+            if (o.player && !o.downed)
+            {
+                foes.push_back(u);
+                foeC.push_back(&o);
+            }
+            else if (!o.player)
+                friends.push_back(u);
+        }
+        if (foes.empty())
+            return false;
+        int cd = s.xp >= 1800 ? 2 : 1;
+        // its plain attack this turn (before it moves: from anywhere it could walk to) - a spell has to beat it
+        float basic = 0.f;
+        float walk = beforeMove ? me->moveMax : 0.f;
+        for (Unit* f : foes)
+        {
+            float d = cr->GetExactDist(f);
+            if (s.melee.valid() && d <= MeleeRange(cr, f) + walk)
+                basic = std::max(basic, 0.65f * AvgDice(s.melee.dice));
+            if (s.ranged.valid() && d <= s.ranged.range + walk && cr->IsWithinLOSInMap(f))
+                basic = std::max(basic, 0.65f * AvgDice(s.ranged.dice));
+        }
+        float bestScore = basic * 1.1f + 0.5f;
+        int best = -1;
+        ObjectGuid bestT;
+        Position bestAt = cr->GetPosition();
+        auto see = [&](Unit* t, float range) { return cr->GetExactDist(t) <= range + t->GetCombatReach() && cr->IsWithinLOSInMap(t); };
+        // its spells (with uses left), and a scroll it carries (a spell, once: index 100 + where it is in what it carries)
+        std::vector<std::pair<CastDef const*, int>> cands;
+        for (std::size_t i = 0; i < s.spells.size() && i < me->castUsed.size(); ++i)
+            if (CastDef const* sd = FindCast(s.spells[i].id); sd && !(s.spells[i].uses && me->castUsed[i] >= s.spells[i].uses))
+                cands.emplace_back(sd, int(i));
+        for (std::size_t k = 0; k < me->carrying.size(); ++k)
+            if (ItemTemplate const* t = sObjectMgr->GetItemTemplate(me->carrying[k]))
+                if (CastDef const* sd = FindCast(t->Spells[0].SpellId))
+                    cands.emplace_back(sd, 100 + int(k));
+        for (auto const& cand : cands)
+        {
+            CastDef const* d = cand.first;
+            int idx = cand.second;
+            if (d->conc && me->concentration && ConcentrationLive(e, *me))
+                continue;                        // it won't drop the spell it holds
+            float dmg = d->n * (d->sides + 1) / 2.f * (d->level ? 1 : cd) * (d->save < 0 ? 0.65f : (d->half ? 0.75f : 0.55f));
+            float rider = RiderValue(d->rider);
+            float lvl = d->level ? 2.f : 0.f;    // a leveled spell is what it carries them for: use it
+            auto consider = [&](float score, Unit* t, Position const& at)
+            {
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = idx;
+                    bestT = t ? t->GetGUID() : cr->GetGUID();
+                    bestAt = at;
+                }
+            };
+            // a foe's worth to this spell: its damage, and the rider if it isn't already under it (or helpless)
+            auto worth = [&](Combatant const& fc) -> float
+            {
+                float v = dmg;
+                if (d->rider != RID_NONE && d->rider != RID_SPECIAL && !Helpless(fc) && !Under(fc, d->rider))
+                    v += rider;
+                return v;
+            };
+            switch (d->shape)
+            {
+                case SHP_ONE:
+                    for (std::size_t k = 0; k < foes.size(); ++k)
+                    {
+                        Unit* f = foes[k];
+                        Combatant const& fc = *foeC[k];
+                        if (!see(f, d->range) || !fc.sanctuaryBy.IsEmpty())
+                            continue;
+                        float v = worth(fc);
+                        if (d->n == 0 && d->rider != RID_SPECIAL && v <= 0.f)
+                            continue;                // nothing to do to this one
+                        switch (d->id)
+                        {
+                            case SPELL_MAGIC_MISSILE:   v = 3 * 3.5f; break;
+                            case SPELL_SCORCHING_RAY:   v = 3 * 7.f * 0.65f; break;
+                            case SPELL_ACID_ARROW:      v = dmg + 3.f; break;
+                            case SPELL_TOLL_THE_DEAD:   v = (f->GetHealth() < f->GetMaxHealth() ? 6.5f : 4.5f) * cd * 0.55f; break;
+                            case SPELL_VAMPIRIC_TOUCH:  v = dmg + (cr->GetHealthPct() < 70.f ? dmg * 0.5f : 0.f); break;
+                            case SPELL_BANE:
+                            case SPELL_SLOW:
+                            {
+                                v = 0.f;
+                                float r = d->radius;
+                                int most = d->id == SPELL_BANE ? 3 : 6;
+                                int n = 0;
+                                for (std::size_t j = 0; j < foes.size() && n < most; ++j)
+                                    if (foes[j]->GetExactDist(f) <= r && (d->id == SPELL_BANE ? foeC[j]->banedBy.IsEmpty() : foeC[j]->slowBy.IsEmpty()) &&
+                                        !Helpless(*foeC[j]))
+                                    {
+                                        ++n;
+                                        v += d->id == SPELL_BANE ? 2.5f : 4.f;
+                                    }
+                                break;
+                            }
+                            default: break;
+                        }
+                        if (v <= 0.f)
+                            continue;
+                        consider(v + lvl - cr->GetExactDist(f) * 0.02f, f, f->GetPosition());
+                    }
+                    break;
+                case SHP_SPOT:
+                    for (Unit* f : foes)
+                    {
+                        if (!see(f, d->range))
+                            continue;
+                        Position at = f->GetPosition();
+                        float v = 0.f;
+                        int n = 0;
+                        for (std::size_t k = 0; k < foes.size(); ++k)
+                        {
+                            if (foes[k]->GetExactDist2d(&at) > d->radius + foes[k]->GetCombatReach())
+                                continue;
+                            ++n;
+                            if (d->id == SPELL_SLEEP)
+                                v += foes[k]->GetHealth() <= 20 && !Helpless(*foeC[k]) ? 9.f : 0.f;
+                            else
+                                v += worth(*foeC[k]);
+                        }
+                        if (n && v > 0.f)
+                            consider(v + lvl, f, at);
+                    }
+                    break;
+                case SHP_AROUND:
+                {
+                    float v = 0.f;
+                    Unit* closest = nullptr;
+                    for (std::size_t k = 0; k < foes.size(); ++k)
+                        if (cr->GetExactDist(foes[k]) <= d->radius + foes[k]->GetCombatReach())
+                        {
+                            v += worth(*foeC[k]);
+                            if (!closest)
+                                closest = foes[k];
+                        }
+                    if (closest && v > 0.f)
+                        consider(v + lvl, closest, cr->GetPosition());
+                    break;
+                }
+                case SHP_CONE:
+                case SHP_LINE:
+                    for (Unit* f : foes)
+                    {
+                        if (!see(f, d->shape == SHP_LINE ? d->range : d->radius))
+                            continue;
+                        float ang = cr->GetAngle(f);
+                        float v = 0.f;
+                        for (std::size_t k = 0; k < foes.size(); ++k)
+                        {
+                            Unit* g = foes[k];
+                            float dx = g->GetPositionX() - cr->GetPositionX(), dy = g->GetPositionY() - cr->GetPositionY();
+                            float along = dx * std::cos(ang) + dy * std::sin(ang);
+                            float off = std::fabs(-dx * std::sin(ang) + dy * std::cos(ang));
+                            bool in = d->shape == SHP_LINE ? (along >= 0.f && along <= d->range && off <= d->radius + g->GetCombatReach())
+                                : (cr->GetExactDist(g) <= d->radius + g->GetCombatReach() && along > 0.f && off <= along * 0.58f + g->GetCombatReach());
+                            if (in)
+                                v += worth(*foeC[k]);
+                        }
+                        if (v > 0.f)
+                            consider(v + lvl, f, f->GetPosition());
+                    }
+                    break;
+                case SHP_ALLY:
+                    for (Unit* a : friends)
+                    {
+                        if (a != cr && !see(a, d->range))
+                            continue;
+                        if (d->id == SPELL_SHIELD_OF_FAITH)
+                        {
+                            Combatant* ac = e.Find(a->GetGUID());
+                            if (ac && ac->faithBy.IsEmpty() && e.round <= 3)
+                                consider(4.f, a, a->GetPosition());
+                            continue;
+                        }
+                        float missing = float(a->GetMaxHealth() - a->GetHealth());
+                        if (a->GetHealthPct() >= 50.f)
+                            continue;
+                        float heal = d->n * (d->sides + 1) / 2.f + CreatureCastMod(cr);
+                        consider(std::min(missing, heal) * 1.2f + 2.f, a, a->GetPosition());
+                    }
+                    break;
+                case SHP_SELF:
+                {
+                    bool foeClose = false;
+                    for (Unit* f : foes)
+                        if (cr->GetExactDist(f) <= 18.f)
+                            foeClose = true;
+                    if (!foeClose)
+                        break;
+                    if (d->id == SPELL_MIRROR_IMAGE && me->images == 0)
+                        consider(7.f, cr, cr->GetPosition());
+                    else if (d->id == SPELL_BLUR && me->concentration != SPELL_BLUR)
+                        consider(6.f, cr, cr->GetPosition());
+                    else if (d->id == SPELL_GREATER_INVISIBILITY && me->invisibleBy.IsEmpty())
+                        consider(9.f, cr, cr->GetPosition());
+                    else if (d->id == SPELL_STONESKIN && me->stoneskinBy.IsEmpty())
+                        consider(8.f, cr, cr->GetPosition());
+                    else if (d->id == SPELL_FIRE_SHIELD && !me->fireShield)
+                        consider(7.f, cr, cr->GetPosition());
+                    break;
+                }
+            }
+        }
+        // a potion, when it's badly hurt
+        if (cr->GetHealthPct() < 35.f)
+            for (std::size_t k = 0; k < me->carrying.size(); ++k)
+                if (Dice pd = PotionDice(me->carrying[k]); pd.count)
+                {
+                    float v = std::min(float(cr->GetMaxHealth() - cr->GetHealth()), AvgDice(pd)) * 1.5f + 3.f;
+                    if (v > bestScore)
+                    {
+                        bestScore = v;
+                        best = 100 + int(k);
+                        bestT = cr->GetGUID();
+                        bestAt = cr->GetPosition();
+                    }
+                }
+        if (best < 0)
+            return false;
+        e.aiCast = best;
+        e.aiTarget = bestT;
+        e.aiCastAt = bestAt;
+        return true;
+    }
+
+    static CastDef const* PlannedCast(Encounter& e, Creature* cr)
+    {
+        if (e.aiCast >= 100)                     // something it carries: a scroll's spell (a potion has none)
+        {
+            Combatant* me = e.Find(cr->GetGUID());
+            std::size_t k = std::size_t(e.aiCast - 100);
+            ItemTemplate const* t = me && k < me->carrying.size() ? sObjectMgr->GetItemTemplate(me->carrying[k]) : nullptr;
+            return t ? FindCast(t->Spells[0].SpellId) : nullptr;
+        }
+        CreatureStats const& s = StatsOrDefault(cr);
+        if (e.aiCast < 0 || e.aiCast >= int(s.spells.size()))
+            return nullptr;
+        return FindCast(s.spells[e.aiCast].id);
+    }
+
+    void CreatureCastVisual(Encounter& e, Creature* cr)
+    {
+        CastDef const* d = PlannedCast(e, cr);
+        if (!d)
+        {
+            if (e.aiCast >= 100)
+                cr->HandleEmoteCommand(EMOTE_ONESHOT_EAT);   // a potion
+            return;
+        }
+        Unit* t = FightUnit(e, e.aiTarget);
+        if (t && t != cr)
+            cr->SetFacingToObject(t);
+        cr->HandleEmoteCommand(EMOTE_ONESHOT_SPELL_CAST);
+        // the players' spell, for its look only (spell_dnd_generic resolves nothing for a creature caster)
+        switch (d->shape)
+        {
+            case SHP_SPOT:
+                cr->CastSpell(e.aiCastAt.GetPositionX(), e.aiCastAt.GetPositionY(), e.aiCastAt.GetPositionZ(), d->id, true);
+                break;
+            case SHP_SELF:
+            case SHP_AROUND:
+            case SHP_CONE:
+                cr->CastSpell(cr, d->id, true);
+                break;
+            default:
+                if (t)
+                    cr->CastSpell(t, d->id, true);
+                break;
+        }
+    }
+
+    // what a creature's spell leaves on someone it reached
+    static void CastRiderOn(Unit* by, Unit* u, CastRider r, int dc, std::string const& name)
+    {
+        Combatant* uc = CombatantOf(u->GetGUID());
+        if (!uc || !u->IsAlive())
+            return;
+        switch (r)
+        {
+            case RID_SLOWED:
+                uc->slowed = true;
+                Narrate(by, u, Acore::StringFormat("   {} is |cff80c0ffChilled|r: -3 m movement next turn.", Who(u)));
+                break;
+            case RID_MOCKED:
+                uc->mocked = true;
+                Narrate(by, u, Acore::StringFormat("   {} is rattled: disadvantage on their next attack.", Who(u)));
+                break;
+            case RID_SLIVER:
+                uc->sliverBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {}'s thoughts splinter: -1d4 on their next save.", Who(u)));
+                break;
+            case RID_SICKEN:
+                if (!SavingThrow(by, u, CON, dc, true, name, true))
+                {
+                    if (Player* tp = u->ToPlayer(); tp && ItemImmune(tp, "poisoned"))
+                        Narrate(by, u, Acore::StringFormat("   {} shrugs it off (their gear): not Poisoned.", Who(u)));
+                    else
+                    {
+                        uc->poisoned = 2;
+                        Narrate(by, u, Acore::StringFormat("   {} is |cff40c040Poisoned|r.", Who(u)));
+                    }
+                }
+                break;
+            case RID_GUIDED:
+                uc->guided = true;
+                Narrate(by, u, Acore::StringFormat("   {} glows: the next attack on them has advantage.", Who(u)));
+                break;
+            case RID_FRIGHT:
+                uc->frightened = true;
+                uc->frightenedBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is |cffc080ffFrightened|r until {}'s next turn.", Who(u), Who(by)));
+                break;
+            case RID_PRONE:
+                KnockProne(by, u);
+                break;
+            case RID_PUSH:
+                PushAway(by, u, 3.f);
+                Narrate(by, u, Acore::StringFormat("   {} is thrown 3 m back.", Who(u)));
+                break;
+            case RID_COMMAND:
+                uc->commanded = true;
+                Narrate(by, u, Acore::StringFormat("   \"|cffffd100Halt!|r\" {} must obey: their next turn is lost.", Who(u)));
+                break;
+            case RID_LAUGH:
+                uc->laughingBy = by->GetGUID();
+                KnockProne(by, u);
+                Narrate(by, u, Acore::StringFormat("   {} collapses in |cffffd100helpless laughter|r: prone, turns lost until they save "
+                    "(WIS, each turn).", Who(u)));
+                break;
+            case RID_HOLD:
+                uc->held = true;
+                uc->heldBy = by->GetGUID();
+                if (u->ToCreature())
+                    u->SetUInt32Value(UNIT_NPC_EMOTESTATE, EMOTE_STATE_STUN);
+                Narrate(by, u, Acore::StringFormat("   {} is |cffff8000Held|r: paralysed until they shake it off (WIS save each turn). "
+                    "Attacks against them have advantage; melee hits from close by are critical.", Who(u)));
+                break;
+            case RID_RESTRAIN:
+                uc->restrained = true;
+                uc->restrainedBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is |cff60c060restrained|r: going nowhere until they tear free (STR save at "
+                    "the start of each turn), easy to hit, and attacking at disadvantage.", Who(u)));
+                break;
+            case RID_BLIND:
+                uc->blinded = true;
+                uc->blindedBy = by->GetGUID();
+                uc->blindSave = true;
+                Narrate(by, u, Acore::StringFormat("   {} is |cffc0c0c0blinded|r: attacking at disadvantage, attacked at advantage "
+                    "(a CON save at the start of each turn).", Who(u)));
+                break;
+            case RID_ENFEEBLE:
+                uc->enfeebledBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is |cffa0a0a0enfeebled|r: their weapons deal half damage (a CON save each turn).",
+                    Who(u)));
+                break;
+            case RID_AFRAID:
+                uc->afraid = true;
+                uc->afraidBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is |cffc080ffterrified|r: disadvantage on attacks (a WIS save each turn).", Who(u)));
+                break;
+            case RID_ENTRANCE:
+                uc->entranced = true;
+                uc->entrancedBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is |cffd080ffentranced|r: they do nothing until something hurts them.", Who(u)));
+                break;
+            case RID_OUTLINE:
+                uc->outlined = true;
+                uc->outlinedBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} is outlined in faerie light: attacks against them have advantage.", Who(u)));
+                break;
+            case RID_NOREACT:
+                uc->noReaction = true;
+                break;
+            case RID_BANISH:
+                uc->banishedBy = by->GetGUID();
+                uc->banishLeft = 10;
+                Narrate(by, u, Acore::StringFormat("   {} |cffd080ffvanishes|r to another plane - no turns, nothing reaches them - while "
+                    "{} holds the spell.", Who(u), Who(by)));
+                break;
+            case RID_KILLER:
+                uc->afraid = true;
+                uc->afraidBy = by->GetGUID();
+                uc->killerBy = by->GetGUID();
+                Narrate(by, u, Acore::StringFormat("   {} sees their deepest fear: |cffc080ffterrified|r, and 4d10 Psychic each turn they "
+                    "fail a WIS save.", Who(u)));
+                break;
+            default:
+                break;
+        }
+    }
+
+    void CreatureCastResolve(Encounter& e, Creature* cr)
+    {
+        CastDef const* d = PlannedCast(e, cr);
+        int i = e.aiCast;
+        e.aiCast = -1;
+        Combatant* me = e.Find(cr->GetGUID());
+        if (!me || !cr->IsAlive() || i < 0)
+            return;
+        CreatureStats const& s = StatsOrDefault(cr);
+        bool carried = i >= 100;
+        if (carried)
+        {
+            std::size_t k = std::size_t(i - 100);
+            if (k >= me->carrying.size())
+                return;
+            uint32 item = me->carrying[k];
+            me->carrying.erase(me->carrying.begin() + std::ptrdiff_t(k));      // used up
+            ItemTemplate const* it = sObjectMgr->GetItemTemplate(item);
+            if (Dice pd = PotionDice(item); pd.count)
+            {
+                std::string detail;
+                int amount = pd.Roll(false, detail);
+                Narrate(cr, nullptr, Acore::StringFormat("{} gulps down a {}: {} = |cff80ff80{}|r hit points.", Who(cr),
+                    it ? it->Name1 : "potion", detail, amount));
+                ApplyHeal(cr, cr, amount, nullptr);
+                PushOrder(e);
+                return;
+            }
+            Narrate(cr, nullptr, Acore::StringFormat("{} unrolls a {} and reads it aloud!", Who(cr), it ? it->Name1 : "scroll"));
+        }
+        if (!d)
+            return;
+        if (!carried && s.spells[i].uses)
+            ++me->castUsed[i];
+        struct ScrollDc { ScrollDc(int dc) { sCreatureScrollDc = dc; } ~ScrollDc() { sCreatureScrollDc = 0; } } scrollDc(carried ?
+            (d->level >= 3 ? 15 : 13) : 0);      // a scroll's numbers: DC 13 / +5, DC 15 / +7 from 3rd level
+        SpellInfo const* info = sSpellMgr->GetSpellInfo(d->id);
+        std::string name = info && info->SpellName[0] ? info->SpellName[0] : "a spell";
+        Unit* t = FightUnit(e, e.aiTarget);
+        if (d->conc)
+        {
+            if (me->concentration)
+                EndConcentration(cr, Acore::StringFormat(" - {} casts {}", me->name, name));
+            me->concentration = d->id;
+        }
+        int dc = carried ? sCreatureScrollDc : CreatureSpellDC(cr), atk = carried ? dc - 8 : CreatureSpellAttack(cr);
+        int cd = s.xp >= 1800 ? 2 : 1;
+        Dice dice{ d->n * (d->level ? 1 : cd), d->sides, 0 };
+        sCurSpell = 0;
+        std::string left = carried ? " (from the scroll)" : s.spells[i].uses ?
+            Acore::StringFormat(" ({} left)", int(s.spells[i].uses) - int(me->castUsed[i])) : "";
+        Narrate(cr, t, Acore::StringFormat("{} casts |cffd080ff{}|r{} (save DC {}, +{} to hit).", Who(cr), name, left, dc, atk));
+        // who it reaches
+        std::vector<Unit*> caught;
+        switch (d->shape)
+        {
+            case SHP_ONE:
+            case SHP_ALLY:
+                if (t && t->IsAlive())
+                    caught.push_back(t);
+                break;
+            case SHP_SELF:
+                caught.push_back(cr);
+                break;
+            case SHP_SPOT:
+                caught = FoesAt(cr, e.aiCastAt, d->radius);
+                break;
+            case SHP_AROUND:
+                caught = FoesAt(cr, cr->GetPosition(), d->radius);
+                break;
+            case SHP_CONE:
+            case SHP_LINE:
+            {
+                float ang = t ? cr->GetAngle(t) : cr->GetOrientation();
+                for (Unit* g : FoesAt(cr, cr->GetPosition(), d->shape == SHP_LINE ? d->range : d->radius))
+                {
+                    float dx = g->GetPositionX() - cr->GetPositionX(), dy = g->GetPositionY() - cr->GetPositionY();
+                    float along = dx * std::cos(ang) + dy * std::sin(ang);
+                    float off = std::fabs(-dx * std::sin(ang) + dy * std::cos(ang));
+                    if (d->shape == SHP_LINE ? (along >= 0.f && off <= d->radius + g->GetCombatReach())
+                        : (along > 0.f && off <= along * 0.58f + g->GetCombatReach()))
+                        caught.push_back(g);
+                }
+                break;
+            }
+        }
+        switch (d->id)
+        {
+            case SPELL_MAGIC_MISSILE:
+                for (int k = 0; k < 3 && t && t->IsAlive(); ++k)
+                {
+                    std::string detail;
+                    DamageCtx dm;
+                    dm.attacker = cr;
+                    dm.victim = t;
+                    dm.amount = Dice{ 1, 4, 1 }.Roll(false, detail);
+                    dm.type = DMG_FORCE;
+                    dm.spell = info;
+                    Narrate(cr, t, Acore::StringFormat("   dart {}: {} = |cffffffff{}|r Force", k + 1, detail, dm.amount));
+                    ApplyDamage(dm);
+                }
+                return;
+            case SPELL_SCORCHING_RAY:
+                for (int k = 0; k < 3 && t && t->IsAlive(); ++k)
+                    AttackRoll(cr, t, Acore::StringFormat("Scorching Ray ({})", k + 1), atk, dice, DMG_FIRE, info, false, false);
+                return;
+            case SPELL_SLEEP:
+            {
+                std::string detail;
+                int pool = dice.Roll(false, detail);
+                std::sort(caught.begin(), caught.end(), [](Unit* x, Unit* y) { return x->GetHealth() < y->GetHealth(); });
+                Narrate(cr, nullptr, Acore::StringFormat("   {} = {} hit points' worth of drowsiness.", detail, pool));
+                for (Unit* u : caught)
+                {
+                    if (Player* ep = u->ToPlayer(); ep && ep->getRace() == RACE_NIGHTELF)
+                    {
+                        Narrate(cr, u, Acore::StringFormat("   {} shrugs it off: magic can't put an elf to sleep.", Who(u)));
+                        continue;
+                    }
+                    if (int(u->GetHealth()) > pool)
+                        break;
+                    pool -= int(u->GetHealth());
+                    if (Combatant* uc = CombatantOf(u->GetGUID()))
+                    {
+                        uc->asleep = true;
+                        u->SetStandState(UNIT_STAND_STATE_SLEEP);
+                        Narrate(cr, u, Acore::StringFormat("   {} falls |cff9ad0ffasleep|r - until something hurts them.", Who(u)));
+                    }
+                }
+                PushOrder(e);
+                return;
+            }
+            case SPELL_HEALING_WORD:
+            case SPELL_CURE_WOUNDS:
+                if (t && t->IsAlive())
+                {
+                    std::string detail;
+                    int amount = std::max(1, Dice{ dice.count, dice.sides, CreatureCastMod(cr) }.Roll(false, detail));
+                    Narrate(cr, t, Acore::StringFormat("   {} regains {} = |cff80ff80{}|r hit points.", Who(t), detail, amount));
+                    ApplyHeal(cr, t, amount, info);
+                }
+                return;
+            case SPELL_SHIELD_OF_FAITH:
+                if (Combatant* tc = t ? CombatantOf(t->GetGUID()) : nullptr)
+                {
+                    tc->faithBy = cr->GetGUID();
+                    Narrate(cr, t, Acore::StringFormat("   A shimmering field surrounds {}: +2 Armour Class.", Who(t)));
+                    PushOrder(e);
+                }
+                return;
+            case SPELL_MIRROR_IMAGE:
+                me->images = 3;
+                Narrate(cr, nullptr, Acore::StringFormat("   Three illusory doubles of {} appear.", Who(cr)));
+                PushOrder(e);
+                return;
+            case SPELL_GREATER_INVISIBILITY:
+                me->invisibleBy = cr->GetGUID();
+                Narrate(cr, nullptr, Acore::StringFormat("   {} fades from sight: its attacks have advantage, attacks on it disadvantage.",
+                    Who(cr)));
+                PushOrder(e);
+                return;
+            case SPELL_STONESKIN:
+                me->stoneskinBy = cr->GetGUID();
+                Narrate(cr, nullptr, Acore::StringFormat("   {}'s skin turns to stone: weapon damage halved.", Who(cr)));
+                PushOrder(e);
+                return;
+            case SPELL_FIRE_SHIELD:
+                me->fireShield = true;
+                Narrate(cr, nullptr, Acore::StringFormat("   Flames wreathe {}: whoever strikes it in melee burns.", Who(cr)));
+                PushOrder(e);
+                return;
+            case SPELL_ICE_STORM:
+                for (Unit* u : caught)
+                    if (u->IsAlive())
+                        SaveTwoDamages(cr, u, info, DEX, Dice{ 2, 8, 0 }, DMG_BLUDGEONING, Dice{ 4, 6, 0 }, DMG_COLD, name);
+                PushOrder(e);
+                return;
+            case SPELL_VITRIOLIC_SPHERE:
+                for (Unit* u : caught)
+                    if (u->IsAlive() && !SaveForDamage(cr, u, info, DEX, dice, DMG_ACID, true, name) && u->IsAlive())
+                        if (Combatant* uc = CombatantOf(u->GetGUID()))
+                        {
+                            uc->acidDice = 5;
+                            uc->acidBy = cr->GetGUID();
+                            Narrate(cr, u, "   The acid clings: 5d4 more at the start of their next turn.");
+                        }
+                PushOrder(e);
+                return;
+            case SPELL_BLUR:
+                Narrate(cr, nullptr, Acore::StringFormat("   {}'s outline blurs: attacks on it have disadvantage.", Who(cr)));
+                return;
+            case SPELL_BANE:
+            case SPELL_SLOW:
+            {
+                if (!t)
+                    return;
+                bool bane = d->id == SPELL_BANE;
+                std::vector<Unit*> who{ t };
+                std::vector<Unit*> others = FoesAt(cr, t->GetPosition(), d->radius);
+                std::sort(others.begin(), others.end(), [t](Unit* x, Unit* y) { return x->GetExactDist(t) < y->GetExactDist(t); });
+                for (Unit* o : others)
+                    if (o != t && who.size() < (bane ? 3u : 6u))
+                        who.push_back(o);
+                for (Unit* u : who)
+                    if (!SavingThrow(cr, u, bane ? CHA : WIS, dc, true, name))
+                        if (Combatant* uc = CombatantOf(u->GetGUID()))
+                        {
+                            if (bane)
+                            {
+                                uc->banedBy = cr->GetGUID();
+                                Narrate(cr, u, Acore::StringFormat("   {} is |cffa080ffbaned|r: -1d4 on attacks and saves.", Who(u)));
+                            }
+                            else
+                            {
+                                uc->slowBy = cr->GetGUID();
+                                uc->noReaction = true;
+                                Narrate(cr, u, Acore::StringFormat("   {} is |cff8080ffslowed|r: -2 AC, half speed, no reactions, -2 on DEX "
+                                    "saves (a WIS save each turn).", Who(u)));
+                            }
+                        }
+                PushOrder(e);
+                return;
+            }
+            case SPELL_VAMPIRIC_TOUCH:
+            {
+                int dealt = 0;
+                if (t && AttackRoll(cr, t, name, atk, dice, DMG_NECROTIC, info, true, false, &dealt) && dealt > 1)
+                {
+                    ApplyHeal(cr, cr, dealt / 2, info);
+                    Narrate(cr, nullptr, Acore::StringFormat("   {} drinks the life: |cff80ff80{}|r hit points.", Who(cr), dealt / 2));
+                }
+                return;
+            }
+            case SPELL_ACID_ARROW:
+                if (!t)
+                    return;
+                if (AttackRoll(cr, t, name, atk, dice, DMG_ACID, info, false, false))
+                {
+                    if (Combatant* tc = CombatantOf(t->GetGUID()); tc && t->IsAlive())
+                    {
+                        tc->acidDice = 2;
+                        tc->acidBy = cr->GetGUID();
+                        Narrate(cr, t, "   The acid keeps eating: 2d4 more at the start of their next turn.");
+                    }
+                }
+                else if (t->IsAlive())
+                {
+                    std::string detail;
+                    DamageCtx dm;
+                    dm.attacker = cr;
+                    dm.victim = t;
+                    dm.amount = dice.Roll(false, detail) / 2;
+                    dm.type = DMG_ACID;
+                    dm.spell = info;
+                    Narrate(cr, t, Acore::StringFormat("   The acid splashes {} anyway: {} halved = |cffffffff{}|r Acid", Who(t), detail, dm.amount));
+                    ApplyDamage(dm);
+                }
+                return;
+            case SPELL_TOLL_THE_DEAD:
+                if (t)
+                    SaveForDamage(cr, t, info, WIS, Dice{ cd, t->GetHealth() < t->GetMaxHealth() ? 12 : 8, 0 }, DMG_NECROTIC, false, name);
+                return;
+            default:
+                break;
+        }
+        if (caught.empty())
+            Narrate(cr, nullptr, "   It catches nobody.");
+        for (Unit* u : caught)
+        {
+            if (!u->IsAlive())
+                continue;
+            bool landed;
+            if (d->save < 0)
+                landed = d->n ? AttackRoll(cr, u, name, atk, dice, d->type, info, d->melee, false) : SpellAttackHits(cr, u, name, atk);
+            else if (d->n)
+                landed = !SaveForDamage(cr, u, info, Ability(d->save), dice, d->type, d->half, name);
+            else
+                landed = !SavingThrow(cr, u, Ability(d->save), dc, true, name);
+            if (landed)
+                CastRiderOn(cr, u, d->rider, dc, name);
+        }
+        PushOrder(e);
+    }
+
     // ------------------------------------------------------------------ rests
+    // a wand (tools/premium.py): an item that casts one of our spells and keeps its charges (a scroll's are -1: used up)
+    static bool IsWand(ItemTemplate const* t)
+    {
+        return t && t->Spells[0].SpellId && GetAction(t->Spells[0].SpellId) && t->Spells[0].SpellCharges > 0;
+    }
+
+    // every wand in the pack (and the bags in it) gets its charges back; how many were recharged
+    static int RechargeWands(Player* p)
+    {
+        int n = 0;
+        auto top = [&](Item* it)
+        {
+            if (!it || !IsWand(it->GetTemplate()))
+                return;
+            int full = it->GetTemplate()->Spells[0].SpellCharges;
+            if (it->GetSpellCharges(0) < full)
+            {
+                it->SetSpellCharges(0, full);
+                it->SetState(ITEM_CHANGED, p);
+                ++n;
+            }
+        };
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            top(p->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+        for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+            if (Bag* b = p->GetBagByPos(bag))
+                for (uint32 i = 0; i < b->GetBagSize(); ++i)
+                    top(b->GetItemByPos(uint8(i)));
+        return n;
+    }
+
     void LongRest(Player* p)
     {
         Sheet& s = GetSheet(p);
+        if (RechargeWands(p))
+            Log(p, "|cffb48cffYour wands hum: every charge is back.|r");
         s.slotsUsed.fill(0);
         s.shortRestsUsed = 0;
         s.arcaneRecoveryUsed = false;
@@ -3259,7 +5256,14 @@ namespace Dnd
             SPELL_FEAR, SPELL_STINKING_CLOUD, SPELL_HUNGER_OF_HADAR, SPELL_SLEET_STORM, SPELL_SACRED_FLAME, SPELL_TOLL_THE_DEAD,
             SPELL_BLESS, SPELL_GUIDING_BOLT, SPELL_INFLICT_WOUNDS, SPELL_SHIELD_OF_FAITH, SPELL_AID, SPELL_LESSER_RESTORATION,
             SPELL_PRAYER_OF_HEALING, SPELL_SPIRIT_GUARDIANS, SPELL_MASS_HEALING_WORD, SPELL_TURN_UNDEAD, SPELL_PRESERVE_LIFE,
-            SPELL_DESTRUCTIVE_WRATH };
+            SPELL_DESTRUCTIVE_WRATH, SPELL_THORN_WHIP, SPELL_FROSTBITE, SPELL_MIND_SLIVER, SPELL_WORD_OF_RADIANCE, SPELL_THUNDERCLAP,
+            SPELL_INFESTATION, SPELL_PRIMAL_SAVAGERY, SPELL_BLADE_WARD, SPELL_CREATE_BONFIRE, SPELL_COMMAND, SPELL_HIDEOUS_LAUGHTER,
+            SPELL_BANE, SPELL_EARTH_TREMOR, SPELL_CATAPULT, SPELL_CHAOS_BOLT, SPELL_SANCTUARY, SPELL_COLOR_SPRAY,
+            SPELL_SPIRITUAL_WEAPON, SPELL_ACID_ARROW, SPELL_BLINDNESS, SPELL_MIRROR_IMAGE, SPELL_MIND_SPIKE, SPELL_SNOWBALL_SWARM,
+            SPELL_FLAMING_SPHERE, SPELL_RAY_OF_ENFEEBLEMENT, SPELL_HASTE, SPELL_SLOW, SPELL_DISPEL_MAGIC, SPELL_THUNDER_STEP,
+            SPELL_TIDAL_WAVE, SPELL_AURA_OF_VITALITY, SPELL_REVIVIFY, SPELL_ICE_STORM, SPELL_BLIGHT, SPELL_VITRIOLIC_SPHERE, SPELL_BANISHMENT,
+            SPELL_GREATER_INVISIBILITY, SPELL_STONESKIN, SPELL_DEATH_WARD, SPELL_DIMENSION_DOOR, SPELL_BLACK_TENTACLES,
+            SPELL_PHANTASMAL_KILLER, SPELL_FIRE_SHIELD };
         return v;
     }
 
@@ -3271,6 +5275,8 @@ namespace Dnd
         bool lock = s.cls == CLASS_DND_WARLOCK, bard = s.cls == CLASS_BARD, druid = s.cls == CLASS_DND_DRUID;
         bool arcane = s.cls == CLASS_WIZARD || s.cls == CLASS_SORCERER;
         bool cleric = s.cls == CLASS_CLERIC, tempest = cleric && IsSubclass(p, "Tempest");
+        bool wiz = s.cls == CLASS_WIZARD;
+        int pl = lock ? PactLevel(p) : 0;
         auto slot = [p](int l) { return SlotsMax(p, l) > 0; };
         switch (id)
         {
@@ -3358,6 +5364,51 @@ namespace Dnd
             case SPELL_FAERIE_FIRE:         return (lock && IsSubclass(p, "Archfey")) || bard || druid;
             case SPELL_FEY_PRESENCE:        return lock && IsSubclass(p, "Archfey");
             case SPELL_DARK_ONES_LUCK:      return lock && lvl >= 6 && IsSubclass(p, "Fiend");
+            // the third batch (5e lists)
+            case SPELL_THORN_WHIP:
+            case SPELL_PRIMAL_SAVAGERY:     return druid;
+            case SPELL_FROSTBITE:
+            case SPELL_INFESTATION:
+            case SPELL_CREATE_BONFIRE:      return druid || arcane || lock;
+            case SPELL_MIND_SLIVER:         return arcane || lock;
+            case SPELL_WORD_OF_RADIANCE:    return cleric;
+            case SPELL_THUNDERCLAP:         return bard || druid || arcane || lock;
+            case SPELL_BLADE_WARD:          return bard || arcane || lock;
+            case SPELL_COMMAND:
+            case SPELL_BANE:                return bard || cleric;
+            case SPELL_HIDEOUS_LAUGHTER:    return bard || wiz;
+            case SPELL_EARTH_TREMOR:        return bard || druid || arcane;
+            case SPELL_CATAPULT:
+            case SPELL_COLOR_SPRAY:         return arcane;
+            case SPELL_CHAOS_BOLT:          return sorc;
+            case SPELL_SANCTUARY:           return cleric;
+            case SPELL_SPIRITUAL_WEAPON:    return cleric && slot(2);
+            case SPELL_ACID_ARROW:          return wiz && slot(2);
+            case SPELL_BLINDNESS:           return (bard || cleric || arcane) && slot(2);
+            case SPELL_MIRROR_IMAGE:
+            case SPELL_MIND_SPIKE:          return (arcane && slot(2)) || pl >= 2;
+            case SPELL_SNOWBALL_SWARM:      return arcane && slot(2);
+            case SPELL_FLAMING_SPHERE:      return (druid || wiz) && slot(2);
+            case SPELL_RAY_OF_ENFEEBLEMENT: return (wiz && slot(2)) || pl >= 2;
+            case SPELL_HASTE:
+            case SPELL_SLOW:                return arcane && slot(3);
+            case SPELL_DISPEL_MAGIC:        return ((bard || cleric || druid || arcane) && slot(3)) || pl >= 3;
+            case SPELL_THUNDER_STEP:        return (arcane && slot(3)) || pl >= 3;
+            case SPELL_TIDAL_WAVE:          return (druid || wiz) && slot(3);
+            case SPELL_AURA_OF_VITALITY:
+            case SPELL_REVIVIFY:            return (druid || cleric) && slot(3);
+            // 4th level: no slot for it before level 7 - scrolls until then
+            case SPELL_ICE_STORM:
+            case SPELL_STONESKIN:           return (druid || arcane) && slot(4);
+            case SPELL_BLIGHT:              return ((druid || arcane) && slot(4)) || pl >= 4;
+            case SPELL_VITRIOLIC_SPHERE:    return arcane && slot(4);
+            case SPELL_BANISHMENT:          return ((cleric || arcane) && slot(4)) || pl >= 4;
+            case SPELL_GREATER_INVISIBILITY:
+            case SPELL_PHANTASMAL_KILLER:   return (bard || arcane) && slot(4);
+            case SPELL_DEATH_WARD:          return cleric && slot(4);
+            case SPELL_DIMENSION_DOOR:      return ((bard || arcane) && slot(4)) || pl >= 4;
+            case SPELL_BLACK_TENTACLES:     return (wiz && slot(4)) || pl >= 4;
+            case SPELL_FIRE_SHIELD:         return wiz && slot(4);
             default:                        return false;
         }
     }
@@ -3729,6 +5780,13 @@ class spell_dnd_generic : public SpellScript
                 bdWhy = "Destructive Wrath: only in a fight.";
             else if (IsArrow(id) && !HoldsBow(p))
                 bdWhy = "Arrows need a bow or crossbow in your ranged slot.";
+            else if (id == SPELL_REVIVIFY && !RevivifyTarget(p, bt))
+                bdWhy = "Revivify: a friend who fell in this fight (their spirit still with them), next to you.";
+            else if ((id == SPELL_HASTE || id == SPELL_SANCTUARY || id == SPELL_GREATER_INVISIBILITY || id == SPELL_STONESKIN ||
+                id == SPELL_DEATH_WARD) && (!bt || !bt->IsPlayer()))
+                bdWhy = Acore::StringFormat("{}: yourself or another player.", GetSpellInfo()->SpellName[0]);
+            else if (id == SPELL_DISPEL_MAGIC && (!bt || !CombatantOf(bt->GetGUID())))
+                bdWhy = "Dispel Magic: someone in the fight - a friend, to end what's on them, or a foe, to end its spells.";
             if (!bdWhy.empty())
             {
                 Error(p, bdWhy);
@@ -3869,6 +5927,12 @@ class spell_dnd_generic : public SpellScript
                     Dnd::Log(p, "|cffffd100Extra Attack:|r you can attack once more this action.");
                     PushEconomy(p);
                 }
+                if (IsAttackAction(info->Id) && me && a->cost == COST_ACTION && Held(me->hastedBy, SPELL_HASTE))
+                {
+                    ++me->extraAttacks;              // Haste: one more weapon attack
+                    Dnd::Log(p, "|cffffd100Haste:|r one more swing this action.");
+                    PushEconomy(p);
+                }
                 if (int sl = slotBefore >= 0 ? slotBefore : SlotToSpend(p, info->Id, a->slotLevel);
                     sl >= 1 && info->Id != SPELL_HELLISH_REBUKE && !fromScroll)
                 {
@@ -3885,7 +5949,8 @@ class spell_dnd_generic : public SpellScript
                     info->Id == SPELL_HYPNOTIC_PATTERN || info->Id == SPELL_ENTANGLE || info->Id == SPELL_MOONBEAM ||
                     info->Id == SPELL_CALL_LIGHTNING || info->Id == SPELL_SLEEP || info->Id == SPELL_CLOUD_OF_DAGGERS ||
                     info->Id == SPELL_WEB || info->Id == SPELL_STINKING_CLOUD || info->Id == SPELL_HUNGER_OF_HADAR ||
-                    info->Id == SPELL_SLEET_STORM)
+                    info->Id == SPELL_SLEET_STORM || info->Id == SPELL_CREATE_BONFIRE || info->Id == SPELL_FLAMING_SPHERE ||
+                    info->Id == SPELL_THUNDER_STEP || info->Id == SPELL_BLACK_TENTACLES || info->Id == SPELL_DIMENSION_DOOR)
                     ResolveDest(p, *dest, info);
             if (a && a->slotLevel >= 1)
                 WildSurge(p);                    // a wild sorcerer's magic may surge
@@ -3913,8 +5978,15 @@ class spell_dnd_generic : public SpellScript
                 {
                     fromScroll = true;
                     ReadScroll(p, std::max(1, int(sa->slotLevel)));
-                    Dnd::Log(p, Acore::StringFormat("|cffb48cffYou read the scroll aloud: {} (save DC {}, +{} to hit).|r",
-                        GetSpellInfo()->SpellName[0], SpellSaveDC(p), SpellAttackBonus(p)));
+                    if (IsWand(GetCastItem()->GetTemplate()))
+                    {
+                        int left = std::max(0, int(GetCastItem()->GetSpellCharges(0)) - 1);     // (this cast's charge comes off after)
+                        Dnd::Log(p, Acore::StringFormat("|cffb48cffYou raise the wand: {} (save DC {}, +{} to hit; {} charge{} left).|r",
+                            GetSpellInfo()->SpellName[0], SpellSaveDC(p), SpellAttackBonus(p), left, left == 1 ? "" : "s"));
+                    }
+                    else
+                        Dnd::Log(p, Acore::StringFormat("|cffb48cffYou read the scroll aloud: {} (save DC {}, +{} to hit).|r",
+                            GetSpellInfo()->SpellName[0], SpellSaveDC(p), SpellAttackBonus(p)));
                 }
             // a concentration spell: the one you held ends, this one begins
             if (IsConcentrationSpell(GetSpellInfo()->Id))
@@ -3922,7 +5994,8 @@ class spell_dnd_generic : public SpellScript
                 {
                     // (Hex cast again moves the hex: the same concentration, and a free move stays free)
                     if (!(me->concentration == GetSpellInfo()->Id && (GetSpellInfo()->Id == SPELL_HEX ||
-                        GetSpellInfo()->Id == SPELL_CALL_LIGHTNING || GetSpellInfo()->Id == SPELL_WITCH_BOLT)))
+                        GetSpellInfo()->Id == SPELL_CALL_LIGHTNING || GetSpellInfo()->Id == SPELL_WITCH_BOLT ||
+                        GetSpellInfo()->Id == SPELL_AURA_OF_VITALITY)))
                         EndConcentration(p, Acore::StringFormat(" - {} casts {}", me->name, SpellName(GetSpellInfo()->Id)));
                     me->concentration = GetSpellInfo()->Id;
                 }

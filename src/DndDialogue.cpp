@@ -177,6 +177,8 @@ namespace Dnd
     static bool Proficient(Player* p, SkillDef const& s)
     {
         Sheet& sh = GetSheet(p);
+        if (RacialSkill(p, s.name))
+            return true;                     // Keen Senses, a subrace's skill
         for (std::string const& k : sh.picks)
             if (k.rfind("skill:", 0) == 0 && StringEqualI(k.substr(6), s.name))
                 return true;                 // learned out in the world (a treat's reward)

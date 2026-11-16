@@ -162,7 +162,11 @@ namespace Dnd
     // ---------------------------------------------------------------- the cleric
     int ChannelMax(Player* p) { return IsClass(p, CLASS_CLERIC) && Level(p) >= 2 ? (Level(p) >= 6 ? 2 : 1) : 0; }
     int WrathMax(Player* p) { return IsClass(p, CLASS_CLERIC) && IsSubclass(p, "Tempest") ? std::max(1, Mod(GetSheet(p).abil[WIS])) : 0; }
-    int HealBonus(Player* p, int spellLevel) { return IsClass(p, CLASS_CLERIC) && IsSubclass(p, "Life") && spellLevel >= 1 ? 2 + spellLevel : 0; }
+    int HealBonus(Player* p, int spellLevel)
+    {
+        return (IsClass(p, CLASS_CLERIC) && IsSubclass(p, "Life") && spellLevel >= 1 ? 2 + spellLevel : 0) +
+            (IsSubrace(p, "Anchorite") && spellLevel >= 1 ? 2 : 0);     // Healing Hands (draenei anchorites)
+    }
 
     void StartWildShape(Player* p, uint32 spell)
     {
@@ -611,9 +615,12 @@ namespace Dnd
         if (spellId == SPELL_HEX)
             if (Combatant* c = CombatantOf(p->GetGUID()); c && c->hexFree)
                 return 0;                    // the hexed creature died: the curse moves on for free
-        if (spellId == SPELL_CALL_LIGHTNING || spellId == SPELL_WITCH_BOLT)
+        if (spellId == SPELL_CALL_LIGHTNING || spellId == SPELL_WITCH_BOLT || spellId == SPELL_AURA_OF_VITALITY)
             if (Combatant* c = CombatantOf(p->GetGUID()); c && c->concentration == spellId)
                 return 0;                    // the storm is already overhead / the arc still holds: again, no slot
+        if (spellId == SPELL_SPIRITUAL_WEAPON)
+            if (Combatant* c = CombatantOf(p->GetGUID()); c && c->spiritWeapon)
+                return 0;                    // the weapon is already out: it strikes again for nothing
         return IsClass(p, CLASS_DND_WARLOCK) ? PactLevel(p) : spellLevel;
     }
 

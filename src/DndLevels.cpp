@@ -27,6 +27,7 @@
  * "pick^asi^INT", "pick^feat^Tough", "pick^feat1^Alert" (every character's free feat at level 1, any race).
  */
 #include "Dnd.h"
+#include "ItemTemplate.h"
 #include "Player.h"
 #include "SpellMgr.h"
 #include "SpellInfo.h"
@@ -120,6 +121,108 @@ namespace Dnd
     }
 
     bool HasFeat(Player* p, char const* feat) { return FeatPick(p, feat) != nullptr; }
+
+    // ---------------------------------------------------------------- subraces
+    // (the WoW race, a subrace name). The race's own traits (every subrace has them) and each subrace's are in the
+    // functions below; the addon's DnDRaces.lua describes them.
+    //   Human (Civil Militia: spears and polearms)  Stormwind: Persuasion; advantage against being frightened
+    //                                               Lordaeron: necrotic resistance; advantage on saves against poison
+    //                                               Kul Tiran: Athletics; advantage on Strength saves
+    //   Dwarf (Resilience, Combat Training, armour   Hill Dwarf: Dwarven Toughness, +1 HP a level
+    //          never slows; 7.5 m)                  Mountain Dwarf: +1 AC in medium or heavy armour
+    //                                               Dark Iron Dwarf: fire resistance; advantage against holds and charms
+    //   Night Elf (Fey Ancestry: advantage against  Sentinel: +1.5 m; Stealth
+    //          charms, no magical sleep; Perception) Highborne: Arcana; advantage on concentration saves
+    //   Gnome (Gnome Cunning; 7.5 m)                Rock Gnome: Investigation; lightning resistance
+    //                                               Forest Gnome: Stealth and Nature; 9 m
+    //   Draenei (radiant and necrotic resistance)   Vindicator: Athletics; advantage against being frightened
+    //                                               Anchorite: Medicine; the healing you give, +2
+    struct SubraceDef { uint8 race; char const* name; };
+    static SubraceDef const sSubraces[] =
+    {
+        { RACE_HUMAN, "Stormwind" }, { RACE_HUMAN, "Lordaeron" }, { RACE_HUMAN, "Kul Tiran" },
+        { RACE_DWARF, "Hill Dwarf" }, { RACE_DWARF, "Mountain Dwarf" }, { RACE_DWARF, "Dark Iron Dwarf" },
+        { RACE_NIGHTELF, "Sentinel" }, { RACE_NIGHTELF, "Highborne" },
+        { RACE_GNOME, "Rock Gnome" }, { RACE_GNOME, "Forest Gnome" },
+        { RACE_DRAENEI, "Vindicator" }, { RACE_DRAENEI, "Anchorite" },
+    };
+
+    std::vector<char const*> SubracesOf(uint8 race)
+    {
+        std::vector<char const*> out;
+        for (SubraceDef const& d : sSubraces)
+            if (d.race == race)
+                out.push_back(d.name);
+        return out;
+    }
+
+    static std::string SubraceOf(Player* p)
+    {
+        for (std::string const& k : GetSheet(p).picks)
+            if (k.rfind("subrace:", 0) == 0)
+                return k.substr(8);
+        return "";
+    }
+
+    bool IsSubrace(Player* p, char const* name) { return p && StringEqualI(SubraceOf(p), name); }
+
+    // what a save is against, by its name (the spell's or the effect's)
+    static bool SaveIs(std::string const& what, std::initializer_list<char const*> names)
+    {
+        for (char const* n : names)
+            if (what.rfind(n, 0) == 0)
+                return true;
+        return false;
+    }
+
+    bool RacialSaveAdvantage(Player* p, Ability a, std::string const& what, bool poison)
+    {
+        uint8 race = p->getRace();
+        bool charm = SaveIs(what, { "Hypnotic Pattern", "Hideous Laughter", "Command", "Fey Presence" });
+        bool fear = SaveIs(what, { "Fear", "Menacing Attack", "Dissonant Whispers" });
+        if (race == RACE_NIGHTELF && charm)
+            return true;                                 // Fey Ancestry
+        if (IsSubrace(p, "Dark Iron Dwarf") && (charm || SaveIs(what, { "Hold Person" })))
+            return true;                                 // Duergar Resilience
+        if ((IsSubrace(p, "Stormwind") || IsSubrace(p, "Vindicator")) && fear)
+            return true;                                 // Brave
+        if (IsSubrace(p, "Lordaeron") && poison)
+            return true;                                 // Plague-Hardened
+        if (IsSubrace(p, "Kul Tiran") && a == STR)
+            return true;                                 // Brawn
+        if (IsSubrace(p, "Highborne") && SaveIs(what, { "Concentration" }))
+            return true;                                 // Focused Mind
+        return false;
+    }
+
+    bool RacialResists(Player* p, DmgType type)
+    {
+        if (p->getRace() == RACE_DRAENEI && (type == DMG_RADIANT || type == DMG_NECROTIC))
+            return true;                                 // Celestial Resistance
+        return (IsSubrace(p, "Lordaeron") && type == DMG_NECROTIC) || (IsSubrace(p, "Dark Iron Dwarf") && type == DMG_FIRE) ||
+            (IsSubrace(p, "Rock Gnome") && type == DMG_LIGHTNING);
+    }
+
+    bool RacialSkill(Player* p, char const* skill)
+    {
+        auto is = [skill](char const* k) { return StringEqualI(skill, k); };
+        if (p->getRace() == RACE_NIGHTELF && is("Perception"))
+            return true;                                 // Keen Senses
+        return (IsSubrace(p, "Stormwind") && is("Persuasion")) || (IsSubrace(p, "Kul Tiran") && is("Athletics")) ||
+            (IsSubrace(p, "Sentinel") && is("Stealth")) || (IsSubrace(p, "Highborne") && is("Arcana")) ||
+            (IsSubrace(p, "Rock Gnome") && is("Investigation")) || (IsSubrace(p, "Forest Gnome") && (is("Stealth") || is("Nature"))) ||
+            (IsSubrace(p, "Vindicator") && is("Athletics")) || (IsSubrace(p, "Anchorite") && is("Medicine"));
+    }
+
+    bool RacialWeapon(Player* p, uint32 sub)
+    {
+        if (p->getRace() == RACE_DWARF)                  // Dwarven Combat Training: battleaxes, handaxes, hammers
+            return sub == ITEM_SUBCLASS_WEAPON_AXE || sub == ITEM_SUBCLASS_WEAPON_AXE2 || sub == ITEM_SUBCLASS_WEAPON_MACE ||
+                sub == ITEM_SUBCLASS_WEAPON_MACE2;
+        if (p->getRace() == RACE_HUMAN)                  // Civil Militia: spears and polearms
+            return sub == ITEM_SUBCLASS_WEAPON_SPEAR || sub == ITEM_SUBCLASS_WEAPON_POLEARM;
+        return false;
+    }
 
     std::string FeatOption(Player* p, char const* feat)
     {
@@ -391,7 +494,9 @@ namespace Dnd
     void PushPendingChoices(Player* p)
     {
         Sheet& s = GetSheet(p);
-        if (IsFighter(p) && !HasAnyStyle(p))
+        if (!SubracesOf(p->getRace()).empty() && SubraceOf(p).empty())
+            Send(p, "LP^subrace");
+        else if (IsFighter(p) && !HasAnyStyle(p))
             Send(p, "LP^style");
         else if (!HasOriginFeat(p))
             Send(p, "LP^feat1");
@@ -466,7 +571,16 @@ namespace Dnd
         std::size_t sep = what.find('^');
         std::string kind = what.substr(0, sep), value = sep == std::string::npos ? "" : what.substr(sep + 1);
         std::vector<uint32> known = KnownKit(p);
-        if (kind == "style" && IsFighter(p) && !HasAnyStyle(p))
+        if (kind == "subrace" && SubraceOf(p).empty())
+        {
+            for (char const* name : SubracesOf(p->getRace()))
+                if (StringEqualI(value, name))
+                {
+                    s.picks.push_back(std::string("subrace:") + name);
+                    Log(p, Acore::StringFormat("|cffffd100Subrace: {}.|r", name));
+                }
+        }
+        else if (kind == "style" && IsFighter(p) && !HasAnyStyle(p))
         {
             for (char const* name : sStyles)
                 if (StringEqualI(value, name))

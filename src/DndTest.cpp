@@ -296,6 +296,14 @@ namespace
         s.created = true;
         s.background = IsCaster(p) ? "Sage" : "Soldier";
         s.picks = o.picks;
+        if (std::none_of(s.picks.begin(), s.picks.end(), [](std::string const& k) { return k.rfind("subrace:", 0) == 0; }))
+        {
+            // a subrace, so nothing waits on it (dwarves on the hill: the HP numbers count Dwarven Toughness)
+            char const* sub = races[o.kind] == RACE_DWARF ? "Hill Dwarf" : races[o.kind] == RACE_GNOME ? "Rock Gnome" :
+                races[o.kind] == RACE_HUMAN ? "Kul Tiran" : nullptr;
+            if (sub)
+                s.picks.push_back(std::string("subrace:") + sub);
+        }
         s.subclass.clear();
         SaveSheet(p);
         LoadProgress(p);
@@ -4322,6 +4330,94 @@ namespace
             ExpectEq(s, "plate AC: 18 flat + Defense", [](Ctx& c) { Equip(Bot(c), EQUIPMENT_SLOT_CHEST, 9966); return ArmorClass(Bot(c)); }, 19);
         });
 
+        // ============================================================ subraces (picked at level 1, before the starting feat)
+        auto asRace = [](Player* p, uint8 race) { p->setRace(race); };
+        add("race.the_subrace_is_asked_first", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                Sheet& sh = GetSheet(p);
+                sh.picks.erase(std::remove_if(sh.picks.begin(), sh.picks.end(), [](std::string const& k) { return k.rfind("subrace:", 0) == 0; }),
+                    sh.picks.end());
+                sMsgs.clear();
+                PushPendingChoices(p);
+                Check(c, Saw("LP^subrace"), "a gnome with no subrace is asked for one first");
+                HandlePick(p, "subrace^Dark Iron Dwarf");
+                Check(c, !IsSubrace(p, "Dark Iron Dwarf"), "a gnome can't be a dwarf");
+                sMsgs.clear();
+                HandlePick(p, "subrace^Forest Gnome");
+                Check(c, IsSubrace(p, "Forest Gnome"), "a forest gnome");
+                CheckEq(c, Speed(p), 9.0, "forest gnomes walk 9 m (other gnomes 7.5)");
+                Check(c, SkillBonusByName(p, "Stealth") == 2 + 2 && SkillBonusByName(p, "Nature") == 3 + 2, "Stealth and Nature");
+                Check(c, Saw("LP^feat1"), "then the starting feat");
+            });
+        });
+        add("race.dwarves_of_the_hill_and_the_mountain", [=](Script& s)
+        {
+            AddBot(s, { DWARF, 1, "", { "subrace:Mountain Dwarf", "style:Archery" } });
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                CheckEq(c, MaxHp(p), 12, "a mountain dwarf fighter: d10 + CON 2, no Dwarven Toughness");
+                Equip(p, EQUIPMENT_SLOT_CHEST, 9966);
+                CheckEq(c, ArmorClass(p), 19, "plate 18, +1 Dwarven Armour Training");
+                GetSheet(p).picks = { "subrace:Hill Dwarf", "style:Archery" };
+                CheckEq(c, MaxHp(p), 13, "a hill dwarf: +1 HP a level");
+                CheckEq(c, ArmorClass(p), 18, "and plain plate");
+                GetSheet(p).picks = { "subrace:Dark Iron Dwarf", "style:Archery" };
+                Check(c, RacialResists(p, DMG_FIRE) && RacialSaveAdvantage(p, WIS, "Hold Person", false),
+                    "a dark iron dwarf: fire resistance, advantage against Hold Person");
+                Check(c, RacialWeapon(p, ITEM_SUBCLASS_WEAPON_AXE2) && SaveAdvantage(p, CON, false, true),
+                    "every dwarf: axes, and advantage against poison");
+            });
+        });
+        add("race.humans", [=](Script& s)
+        {
+            AddBot(s, { FIGHTER, 1, "", { "subrace:Lordaeron", "style:Archery" } });
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                Remember(c);
+                DamageCtx d;
+                d.attacker = p;
+                d.victim = p;
+                d.amount = 4;
+                d.type = DMG_NECROTIC;
+                ApplyDamage(d);
+                CheckEq(c, c.v["bothp"] - float(p->GetHealth()), 2, "Lordaeron: 4 Necrotic, resisted");
+                GetSheet(p).picks = { "subrace:Stormwind", "style:Archery" };
+                Check(c, RacialSaveAdvantage(p, WIS, "Fear", false) && RacialSkill(p, "Persuasion"),
+                    "Stormwind: brave, and Persuasion");
+                GetSheet(p).picks = { "subrace:Kul Tiran", "style:Archery" };
+                Check(c, RacialSaveAdvantage(p, STR, "Trip Attack", false) && !RacialSaveAdvantage(p, DEX, "Grease", false),
+                    "Kul Tiran: Strength saves");
+                Check(c, RacialWeapon(p, ITEM_SUBCLASS_WEAPON_POLEARM), "every human: polearms and spears");
+            });
+        });
+        add("race.night_elves_and_draenei", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            Act(s, [asRace](Ctx& c)
+            {
+                Player* p = Bot(c);
+                asRace(p, RACE_NIGHTELF);
+                GetSheet(p).picks = { "subrace:Sentinel" };
+                Check(c, RacialSaveAdvantage(p, WIS, "Hypnotic Pattern", false) && RacialSkill(p, "Perception"),
+                    "Fey Ancestry, Keen Senses");
+                CheckEq(c, Speed(p), 10.5, "a sentinel: 9 + 1.5 m");
+                GetSheet(p).picks = { "subrace:Highborne" };
+                Check(c, RacialSaveAdvantage(p, CON, "Concentration (Bless)", false) && RacialSkill(p, "Arcana"),
+                    "highborne: concentration, Arcana");
+                asRace(p, RACE_DRAENEI);
+                GetSheet(p).picks = { "subrace:Anchorite" };
+                Check(c, RacialResists(p, DMG_RADIANT) && RacialResists(p, DMG_NECROTIC), "celestial resistance");
+                CheckEq(c, HealBonus(p, 1), 2, "an anchorite's healing: +2");
+                CheckEq(c, HealBonus(p, 0), 0, "(spells, not cantrips)");
+            });
+        });
+
         // ============================================================ dwarves
         add("dwarf.toughness_and_speed", [=](Script& s)
         {
@@ -6472,6 +6568,834 @@ namespace
 
 
 
+        // ============================================================ the third batch of spells (every die a 1 unless rigged)
+        // The builds: wizard (gnome) INT 16: +5 to hit, DC 13; cleric WIS 16, druid WIS 16, bard CHA 17: the same at level 1.
+        // The test creature: AC 10, 300 HP, every ability 10 (saves +0).
+        auto stuckAt = [](float dx, float dy = 0.f)
+        {
+            MobOpt m;
+            m.dx = dx;
+            m.dy = dy;
+            m.st.speed = 0.f;
+            return m;
+        };
+        add("spells3.thorn_whip_pulls", [=](Script& s)
+        {
+            AddBot(s, { DRUID, 1 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_THORN_WHIP);
+            ExpectCastOk(s);
+            ExpectDrop(s, 1, 0, "15 + 5 hits AC 10: 1d6 Piercing (1)");
+            Expect(s, "pulled up to 3 m closer (8 m, now about 5)", [](Ctx& c) { return Mob(c)->GetExactDist(Bot(c)) < 5.8f; });
+        });
+        add("spells3.frostbite_numbs", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_FROSTBITE);
+            ExpectDrop(s, 1, 0, "a failed CON save (1 vs DC 13): 1d6 Cold (1)");
+            Expect(s, "disadvantage on its next attack", [](Ctx& c) { return MobC(c)->mocked; });
+        });
+        add("spells3.mind_sliver_spoils_the_next_save", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_MIND_SLIVER);
+            ExpectDrop(s, 1, 0, "a failed INT save: 1d6 Psychic (1)");
+            Expect(s, "marked", [](Ctx& c) { return MobC(c)->sliverBy == Bot(c)->GetGUID(); });
+            Act(s, [](Ctx& c)
+            {
+                sDice.assign({ 15, 15 });
+                sFallback = 4;
+                bool saved = LairSave(Bot(c), Mob(c), CON, 13, "a test");     // 15 + 0 - 1d4 (4) = 11 < 13
+                sDice.clear();
+                Check(c, !saved, "a 15 would save against DC 13; less the 1d4 it fails");
+                Check(c, MobC(c)->sliverBy.IsEmpty(), "and the sliver is spent");
+            });
+        });
+        add("spells3.word_of_radiance_right_beside_you", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            AddMob(s, stuckAt(2.f));
+            AddMob(s, stuckAt(7.f, 2.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_WORD_OF_RADIANCE, -1);
+            ExpectCastOk(s);
+            ExpectDrop(s, 1, 0, "beside the cleric: a failed CON save, 1d6 Radiant (1)");
+            ExpectDrop(s, 0, 1, "7 m off: untouched");
+        });
+        add("spells3.thunderclap", [=](Script& s)
+        {
+            AddBot(s, { BARD, 1 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_THUNDERCLAP, -1);
+            ExpectDrop(s, 1, 0, "1d6 Thunder (1)");
+        });
+        add("spells3.infestation", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_INFESTATION);
+            ExpectCastOk(s);
+            ExpectDrop(s, 1, 0, "1d6 Poison (1)");
+        });
+        add("spells3.primal_savagery", [=](Script& s)
+        {
+            AddBot(s, { DRUID, 1 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_PRIMAL_SAVAGERY);
+            ExpectDrop(s, 1, 0, "a melee spell attack: 1d10 Acid (1)");
+        });
+        add("spells3.blade_ward_halves_a_blow", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Cast(s, SPELL_BLADE_WARD, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = 4;
+                d.type = DMG_SLASHING;
+                d.melee = true;
+                ApplyDamage(d);
+                CheckEq(c, c.v["bothp"] - float(Bot(c)->GetHealth()), 2, "4 Slashing, halved");
+            });
+        });
+        add("spells3.create_bonfire_at_turn_start", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            CastAt(s, SPELL_CREATE_BONFIRE, 8.f, 0.f);
+            ExpectCastOk(s);
+            ExpectDrop(s, 1, 0, "on the cast: a failed DEX save, 1d8 Fire (1)");
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 1, 0, "and again as its turn starts in the fire");
+        });
+        add("spells3.command_costs_a_turn", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_COMMAND);
+            Expect(s, "a failed WIS save: commanded", [](Ctx& c) { return MobC(c)->commanded; });
+            NextTurn(s, true);
+            ExpectSaw(s, "obeys the command");
+            Expect(s, "one turn only", [](Ctx& c) { return !MobC(c)->commanded; });
+        });
+        add("spells3.command_means_nothing_to_a_beast", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            MobOpt b = stuckAt(8.f);
+            b.st = Stats(BEAST);
+            b.st.speed = 0.f;
+            b.st.abil[INT] = 2;
+            AddMob(s, b);
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_COMMAND);
+            ExpectSaw(s, "can't understand a command");
+            Expect(s, "no effect", [](Ctx& c) { return !MobC(c)->commanded; });
+        });
+        add("spells3.hideous_laughter", [=](Script& s)
+        {
+            AddBot(s, { BARD, 1 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_HIDEOUS_LAUGHTER);
+            Expect(s, "a failed WIS save: prone with laughter", [](Ctx& c)
+            {
+                return MobC(c)->laughingBy == Bot(c)->GetGUID() && MobC(c)->prone && BotC(c)->concentration == SPELL_HIDEOUS_LAUGHTER;
+            });
+            NextTurn(s, true);
+            ExpectSaw(s, "still |cffffd100helpless with laughter");
+            Rig(s, { 20, 20 }, 20);
+            NextTurn(s, true);
+            Expect(s, "a 20 saves: it stops laughing and gets up", [](Ctx& c) { return MobC(c)->laughingBy.IsEmpty() && !MobC(c)->prone; });
+        });
+        add("spells3.bane_on_three", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            AddMob(s, stuckAt(2.f));
+            AddMob(s, stuckAt(3.f, 1.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_BANE);
+            Expect(s, "both fail their CHA saves", [](Ctx& c)
+            {
+                return MobC(c, 0)->banedBy == Bot(c)->GetGUID() && MobC(c, 1)->banedBy == Bot(c)->GetGUID();
+            });
+            Act(s, [](Ctx& c)
+            {
+                sMsgs.clear();
+                sDice.assign({ 15, 15 });
+                sFallback = 4;
+                CreatureAttack(Mob(c), Bot(c), false, false);
+                sDice.clear();
+            });
+            s.Wait(500);
+            ExpectSaw(s, "- 4 (Bane)");
+        });
+        add("spells3.earth_tremor_topples", [=](Script& s)
+        {
+            AddBot(s, { DRUID, 1 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_EARTH_TREMOR, -1);
+            ExpectDrop(s, 1, 0, "a failed DEX save: 1d6 Bludgeoning (1)");
+            Expect(s, "and prone", [](Ctx& c) { return MobC(c)->prone; });
+        });
+        add("spells3.catapult", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_CATAPULT);
+            ExpectDrop(s, 3, 0, "a failed DEX save: 3d8 Bludgeoning (three 1s)");
+        });
+        add("spells3.chaos_bolt_leaps_on_a_double", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            AddMob(s, { 9.f, 1.f });
+            StartFight(s);
+            // the d8s 3 and 3 (fire, a double); 15 hits; 1d6 (1) + 3 + 3 = 7. The leap: 2 and 5 (cold); 15 hits; 1 + 2 + 5 = 8
+            Rig(s, { 3, 3, 15, 15, 1, 2, 5, 15, 15, 1 }, 1);
+            Cast(s, SPELL_CHAOS_BOLT);
+            ExpectDrop(s, 7, 0, "2d8 (3, 3) + 1d6 (1) Fire");
+            ExpectDrop(s, 8, 1, "the leap: 2d8 (2, 5) + 1d6 (1) Cold");
+        });
+        add("spells3.sanctuary_turns_a_foe_away", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            AddMob(s, { 2.f, 0.f });
+            StartFight(s);
+            Cast(s, SPELL_SANCTUARY, -1);
+            ExpectCastOk(s);
+            Rig(s, {}, 1);
+            NextTurn(s, true);
+            ExpectSaw(s, "can't bring itself to attack");
+            Expect(s, "the cleric is untouched", [](Ctx& c) { return float(Bot(c)->GetHealth()) == c.v["bothp"]; });
+        });
+        add("spells3.color_spray_blinds_the_weakest", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            MobOpt frail = stuckAt(3.f);
+            frail.st = Stats(HUMANOID, 10, 5);
+            frail.st.speed = 0.f;
+            AddMob(s, frail);
+            AddMob(s, stuckAt(3.5f, 0.8f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_COLOR_SPRAY, -1);
+            ExpectCastOk(s);
+            Expect(s, "6d10 (6): the 5 HP one is blinded, the 300 HP one isn't", [](Ctx& c)
+            {
+                return MobC(c, 0)->blinded && !MobC(c, 1)->blinded;
+            });
+            NextTurn(s, true);
+            Expect(s, "until the wizard's next turn", [](Ctx& c) { return !MobC(c, 0)->blinded; });
+        });
+        add("spells3.spiritual_weapon_strikes_again_free", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 3 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_SPIRITUAL_WEAPON);
+            ExpectCastOk(s);
+            ExpectDrop(s, 4, 0, "1d8 (1) + WIS 3 Force");
+            ExpectEq(s, "a 2nd-level slot", [](Ctx& c) { return double(GetSheet(Bot(c)).slotsUsed[2]); }, 1);
+            NextTurn(s, true);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_SPIRITUAL_WEAPON);
+            ExpectCastOk(s);
+            ExpectDrop(s, 4, 0, "again: 4");
+            ExpectEq(s, "and no second slot", [](Ctx& c) { return double(GetSheet(Bot(c)).slotsUsed[2]); }, 1);
+        });
+        add("spells3.acid_arrow_eats_on", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_ACID_ARROW);
+            ExpectDrop(s, 4, 0, "4d4 Acid (four 1s)");
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 2, 0, "and 2d4 at the start of its turn");
+        });
+        add("spells3.blindness", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_BLINDNESS);
+            Expect(s, "a failed CON save: blinded", [](Ctx& c) { return MobC(c)->blinded && MobC(c)->blindSave; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); CreatureAttack(Mob(c), Bot(c), false, false); });
+            s.Wait(500);
+            ExpectSaw(s, "blinded: disadvantage");
+        });
+        add("spells3.mirror_image_takes_the_blow", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Cast(s, SPELL_MIRROR_IMAGE, -1);
+            ExpectCastOk(s);
+            Expect(s, "three doubles", [](Ctx& c) { return BotC(c)->images == 3; });
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                sDice.assign({ 10, 15, 15 });             // 10: a double is in the way (6+); 15 + 4 hits its AC 10 + DEX 2
+                sFallback = 1;
+                CreatureAttack(Mob(c), Bot(c), false, false);
+                sDice.clear();
+                CheckEq(c, double(BotC(c)->images), 2, "the double bursts");
+                CheckEq(c, double(Bot(c)->GetHealth()), c.v["bothp"], "and the wizard isn't touched");
+            });
+        });
+        add("spells3.mind_spike", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_MIND_SPIKE);
+            ExpectDrop(s, 3, 0, "a failed WIS save: 3d8 Psychic (three 1s)");
+        });
+        add("spells3.snowball_swarm_burst", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, { 8.f, 0.f });
+            AddMob(s, { 8.f, 1.5f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            CastAt(s, SPELL_SNOWBALL_SWARM, 8.f, 0.7f);
+            ExpectCastOk(s);
+            ExpectDrop(s, 3, 0, "3d6 Cold (three 1s)");
+            ExpectDrop(s, 3, 1, "both in the burst");
+        });
+        add("spells3.flaming_sphere_burns_beside_it", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            CastAt(s, SPELL_FLAMING_SPHERE, 8.f, 0.f);
+            ExpectCastOk(s);
+            ExpectDrop(s, 2, 0, "on the cast: 2d6 Fire (1 + 1)");
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 2, 0, "and at its turn start");
+        });
+        add("spells3.ray_of_enfeeblement_halves_its_blows", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 3 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, { 15, 15 }, 1);
+            Cast(s, SPELL_RAY_OF_ENFEEBLEMENT);
+            Expect(s, "a hit: enfeebled", [](Ctx& c) { return MobC(c)->enfeebledBy == Bot(c)->GetGUID(); });
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = 4;
+                d.type = DMG_BLUDGEONING;
+                d.melee = true;
+                ApplyDamage(d);
+                CheckEq(c, c.v["bothp"] - float(Bot(c)->GetHealth()), 2, "its 4 halved");
+            });
+        });
+        add("spells3.haste_and_its_price", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 5 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Act(s, [](Ctx& c) { c.v["move"] = BotC(c)->moveMax; c.v["ac"] = float(ArmorClass(Bot(c))); });
+            Cast(s, SPELL_HASTE, -1);
+            ExpectCastOk(s);
+            Expect(s, "+2 AC", [](Ctx& c) { return float(ArmorClass(Bot(c))) == c.v["ac"] + 2.f; });
+            Expect(s, "double movement, this turn too", [](Ctx& c) { return std::abs(BotC(c)->moveMax - 2.f * c.v["move"]) < 0.01f; });
+            Act(s, [](Ctx& c)
+            {
+                EndConcentration(Bot(c), "");
+                Check(c, BotC(c)->lethargic && BotC(c)->hastedBy.IsEmpty(), "it ends: lethargic, the next turn lost");
+            });
+        });
+        add("spells3.slow_on_two", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 5 });
+            AddMob(s, stuckAt(8.f));
+            AddMob(s, stuckAt(9.f, 1.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            Cast(s, SPELL_SLOW);
+            ExpectEq(s, "AC 10 - 2", [](Ctx& c) { return double(ArmorClass(Mob(c, 0))); }, 8);
+            ExpectEq(s, "its neighbour too", [](Ctx& c) { return double(ArmorClass(Mob(c, 1))); }, 8);
+        });
+        add("spells3.dispel_magic_both_ways", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 5 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Act(s, [](Ctx& c) { MobC(c)->concentration = SPELL_BLUR; });
+            Cast(s, SPELL_DISPEL_MAGIC);
+            ExpectCastOk(s);
+            Expect(s, "a foe's spell ends", [](Ctx& c) { return MobC(c)->concentration == 0; });
+            NextTurn(s);
+            Act(s, [](Ctx& c)
+            {
+                BotC(c)->held = true;
+                BotC(c)->heldBy = Mob(c)->GetGUID();
+            });
+            Cast(s, SPELL_DISPEL_MAGIC, -1);
+            ExpectCastOk(s);
+            Expect(s, "a friend's hold ends", [](Ctx& c) { return !BotC(c)->held; });
+        });
+        add("spells3.thunder_step", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 5 });
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            CastAt(s, SPELL_THUNDER_STEP, -15.f, 0.f);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c) { AckTeleport(Bot(c)); });
+            ExpectDrop(s, 3, 0, "where the wizard stood: a failed CON save, 3d10 Thunder (three 1s)");
+            Expect(s, "and the wizard is well away", [](Ctx& c) { return Bot(c)->GetExactDist2d(c.v["fromx"], c.v["fromy"]) > 10.f; });
+        });
+        add("spells3.tidal_wave", [=](Script& s)
+        {
+            AddBot(s, { DRUID, 5 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            CastAt(s, SPELL_TIDAL_WAVE, 8.f, 0.f);
+            ExpectCastOk(s);
+            ExpectDrop(s, 4, 0, "a failed DEX save: 4d8 Bludgeoning (four 1s)");
+            Expect(s, "and knocked prone", [](Ctx& c) { return MobC(c)->prone; });
+        });
+        add("spells3.aura_of_vitality_again_free", [=](Script& s)
+        {
+            AddBot(s, { DRUID, 5 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Act(s, [](Ctx& c) { Bot(c)->SetHealth(Bot(c)->GetMaxHealth() - 10); });
+            Rig(s, {}, 1);
+            Cast(s, SPELL_AURA_OF_VITALITY, -1);
+            ExpectCastOk(s);
+            ExpectEq(s, "2d6 (1 + 1)", [](Ctx& c) { return double(Bot(c)->GetMaxHealth() - Bot(c)->GetHealth()); }, 8);
+            ExpectEq(s, "a 3rd-level slot", [](Ctx& c) { return double(GetSheet(Bot(c)).slotsUsed[3]); }, 1);
+            NextTurn(s, true);
+            Act(s, [](Ctx& c) { c.v["missing"] = float(Bot(c)->GetMaxHealth() - Bot(c)->GetHealth()); });
+            Rig(s, {}, 1);
+            Cast(s, SPELL_AURA_OF_VITALITY, -1);
+            ExpectCastOk(s);
+            ExpectEq(s, "again, 2 more", [](Ctx& c) { return c.v["missing"] - float(Bot(c)->GetMaxHealth() - Bot(c)->GetHealth()); }, 2);
+            ExpectEq(s, "and no second slot", [](Ctx& c) { return double(GetSheet(Bot(c)).slotsUsed[3]); }, 1);
+        });
+        add("spells3.revivify_a_fallen_friend", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 5 });
+            AddMob(s, stuckAt(10.f));
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                Player* a = Bot(c);
+                sDice.assign({ 2, 2 });
+                Player* b = AddBotAt(c, WIZ, 3, a->GetPositionX() - 2.f, a->GetPositionY());
+                OnPlayerMoved(b, b->GetPosition());
+                sDice.clear();
+                Check(c, InCombat(b), "the wizard joined");
+                b->AddAura(SPELL_FALLEN, b);             // (as a death in a fight with friends about: no releasing)
+                KillOutright(b);
+                Check(c, !b->IsAlive(), "and fell");
+                CastAs(c, 0, SPELL_REVIVIFY, b);
+            });
+            s.Wait(1200);
+            Act(s, [](Ctx& c)
+            {
+                Player* b = Bot(c, 1);
+                Combatant* bc = CombatantOf(b->GetGUID());
+                std::string err;
+                for (std::string const& m : sMsgs)
+                    if (m.rfind("X^", 0) == 0)
+                        err = m.substr(2);
+                CheckEq(c, c.v["cast"], double(SPELL_CAST_OK), "the cast goes off" + (err.empty() ? std::string() : " (" + err + ")"));
+                Check(c, b->IsAlive() && b->GetHealth() == 1, "back with 1 hit point");
+                Check(c, bc && bc->alive, "and in the fight again");
+            });
+        });
+        add("spells3.who_knows_what", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                Player* w = Bot(c);
+                Check(c, w->HasSpell(SPELL_MIND_SLIVER) && w->HasSpell(SPELL_CATAPULT) && w->HasSpell(SPELL_COLOR_SPRAY) &&
+                    w->HasSpell(SPELL_HIDEOUS_LAUGHTER) && w->HasSpell(SPELL_FROSTBITE), "a level 1 wizard");
+                Check(c, !w->HasSpell(SPELL_CHAOS_BOLT) && !w->HasSpell(SPELL_COMMAND) && !w->HasSpell(SPELL_THORN_WHIP),
+                    "not the sorcerer's, the cleric's or the druid's");
+                w->GiveLevel(5);
+                Check(c, w->HasSpell(SPELL_HASTE) && w->HasSpell(SPELL_SLOW) && w->HasSpell(SPELL_THUNDER_STEP) &&
+                    w->HasSpell(SPELL_ACID_ARROW) && w->HasSpell(SPELL_MIRROR_IMAGE), "level 5: Haste, Slow, Thunder Step...");
+                Player* cl = AddBotAt(c, CLERIC, 1, w->GetPositionX() + 3.f, w->GetPositionY());
+                Check(c, cl->HasSpell(SPELL_COMMAND) && cl->HasSpell(SPELL_BANE) && cl->HasSpell(SPELL_SANCTUARY) &&
+                    cl->HasSpell(SPELL_WORD_OF_RADIANCE) && !cl->HasSpell(SPELL_SPIRITUAL_WEAPON), "a cleric (no 2nd level yet)");
+                Player* d = AddBotAt(c, DRUID, 1, w->GetPositionX() - 3.f, w->GetPositionY());
+                Check(c, d->HasSpell(SPELL_THORN_WHIP) && d->HasSpell(SPELL_PRIMAL_SAVAGERY) && d->HasSpell(SPELL_EARTH_TREMOR),
+                    "a druid");
+                Player* l = AddBotAt(c, LOCK, 1, w->GetPositionX(), w->GetPositionY() + 3.f);
+                Check(c, l->HasSpell(SPELL_FROSTBITE) && l->HasSpell(SPELL_BLADE_WARD) && !l->HasSpell(SPELL_CATAPULT) &&
+                    !l->HasSpell(SPELL_MIND_SPIKE), "a warlock: the cantrips, nothing leveled before pact level 2");
+            });
+        });
+
+        // ============================================================ 4th-level spells: scrolls (DC 15, +7), every die a 1 unless rigged
+        // (a level 5 fighter reads them: 44 HP, no spell slots of its own)
+        auto readScroll = [](Script& s, uint32 item, uint32 spell, int target, float dx = 0.f, float dy = 0.f, bool dest = false)
+        {
+            Act(s, [=](Ctx& c)
+            {
+                Player* p = Bot(c);
+                if (!p->GetItemByEntry(item))
+                    p->AddItem(item, 1);
+                Item* it = p->GetItemByEntry(item);
+                Remember(c);
+                ClearMsgs();
+                Prep(p, spell);
+                c.v["fromx"] = p->GetPositionX();
+                c.v["fromy"] = p->GetPositionY();
+                if (dest)
+                {
+                    float x = p->GetPositionX() + dx, y = p->GetPositionY() + dy;
+                    p->SetOrientation(std::atan2(dy, dx));
+                    c.v["cast"] = float(p->CastSpell(x, y, Ground(p->GetMap(), x, y), spell, false, it));
+                }
+                else
+                {
+                    Unit* t = target < 0 ? static_cast<Unit*>(p) : static_cast<Unit*>(Mob(c, std::size_t(target)));
+                    if (t != p)
+                        p->SetOrientation(p->GetAngle(t));
+                    c.v["cast"] = float(p->CastSpell(t, spell, TRIGGERED_NONE, it));
+                }
+            });
+            s.Wait(1000);
+        };
+        BotOpt fig5{ FIGHTER, 5 };
+        add("spells4.ice_storm", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 10305, SPELL_ICE_STORM, 0, 8.f, 0.f, true);
+            ExpectCastOk(s);
+            ExpectSaw(s, "DC 15");
+            ExpectDrop(s, 6, 0, "a failed DEX save: 2d8 Bludgeoning (2) and 4d6 Cold (4)");
+        });
+        add("spells4.blight", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 10306, SPELL_BLIGHT, 0);
+            ExpectDrop(s, 8, 0, "a failed CON save: 8d8 Necrotic (eight 1s)");
+        });
+        add("spells4.vitriolic_sphere_clings", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 10307, SPELL_VITRIOLIC_SPHERE, 0, 8.f, 0.f, true);
+            ExpectDrop(s, 10, 0, "10d4 Acid (ten 1s)");
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 5, 0, "and 5d4 as its turn starts");
+        });
+        add("spells4.banishment", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 10308, SPELL_BANISHMENT, 0);
+            Expect(s, "a failed CHA save: gone, while the fighter holds it", [](Ctx& c)
+            {
+                return MobC(c)->banishedBy == Bot(c)->GetGUID() && BotC(c)->concentration == SPELL_BANISHMENT;
+            });
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                DamageCtx d;
+                d.attacker = Bot(c);
+                d.victim = Mob(c);
+                d.amount = 10;
+                d.type = DMG_FORCE;
+                ApplyDamage(d);
+                CheckEq(c, Dropped(c, 0), 0, "nothing reaches it");
+            });
+            NextTurn(s, true);
+            ExpectSaw(s, "is still |cffd080ffbanished");
+        });
+        add("spells4.greater_invisibility", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            readScroll(s, 10309, SPELL_GREATER_INVISIBILITY, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c) { sMsgs.clear(); CreatureAttack(Mob(c), Bot(c), false, false); });
+            s.Wait(500);
+            ExpectSaw(s, "target invisible: disadvantage");
+        });
+        add("spells4.stoneskin", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            readScroll(s, 10310, SPELL_STONESKIN, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = 4;
+                d.type = DMG_SLASHING;
+                d.melee = true;
+                ApplyDamage(d);
+                CheckEq(c, c.v["bothp"] - float(Bot(c)->GetHealth()), 2, "4 Slashing, halved");
+            });
+        });
+        add("spells4.death_ward", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            readScroll(s, 27498, SPELL_DEATH_WARD, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c)
+            {
+                DamageCtx d;
+                d.attacker = Mob(c);
+                d.victim = Bot(c);
+                d.amount = int(Bot(c)->GetHealth()) + 5;
+                d.type = DMG_FORCE;
+                ApplyDamage(d);
+                Check(c, !IsDowned(Bot(c)) && Bot(c)->GetHealth() == 1, "a blow past every hit point: still standing, at 1");
+                Check(c, !BotC(c)->deathWard, "and the ward is spent");
+            });
+        });
+        add("spells4.dimension_door", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            readScroll(s, 27499, SPELL_DIMENSION_DOOR, 0, -35.f, 0.f, true);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c) { AckTeleport(Bot(c)); });
+            Expect(s, "35 m away", [](Ctx& c) { return Bot(c)->GetExactDist2d(c.v["fromx"], c.v["fromy"]) > 25.f; });
+        });
+        add("spells4.black_tentacles", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 27500, SPELL_BLACK_TENTACLES, 0, 8.f, 0.f, true);
+            ExpectDrop(s, 3, 0, "a failed DEX save: 3d6 Bludgeoning (three 1s)");
+            Expect(s, "and restrained", [](Ctx& c) { return MobC(c)->restrained; });
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 3, 0, "and again as its turn starts among them");
+        });
+        add("spells4.phantasmal_killer", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Rig(s, {}, 1);
+            readScroll(s, 27501, SPELL_PHANTASMAL_KILLER, 0);
+            Expect(s, "a failed WIS save: terrified", [](Ctx& c) { return MobC(c)->afraid && MobC(c)->killerBy == Bot(c)->GetGUID(); });
+            Act(s, [](Ctx& c) { Remember(c); });
+            NextTurn(s, true);
+            ExpectDrop(s, 4, 0, "its turn: the save fails again, 4d10 Psychic (four 1s)");
+        });
+        add("spells4.fire_shield_burns_back", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            AddMob(s, stuckAt(2.f));
+            StartFight(s);
+            readScroll(s, 27502, SPELL_FIRE_SHIELD, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c)
+            {
+                Remember(c);
+                sDice.assign({ 15, 15 });
+                sFallback = 1;
+                CreatureAttack(Mob(c), Bot(c), false, false);       // a hit for 1
+                sDice.clear();
+                CheckEq(c, Dropped(c, 0), 2, "the claw that struck burns: 2d8 Fire (1 + 1)");
+            });
+        });
+        add("spells4.no_slot_without_a_scroll", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 5 });
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Cast(s, SPELL_BLIGHT);
+            ExpectRefused(s, "No level 4 spell slots");
+        });
+
+        // ============================================================ what creatures carry (tools/carried.py)
+        add("carried.a_hurt_creature_drinks_its_potion", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            MobOpt m = stuckAt(8.f);
+            m.st.carries = { { 118, 100 } };
+            AddMob(s, m);
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                Check(c, MobC(c)->carrying.size() == 1, "a 100% potion: it has it");
+                Mob(c)->SetHealth(50);           // a sixth of 300: badly hurt
+            });
+            Rig(s, {}, 1);
+            NextTurn(s, true);
+            ExpectEq(s, "2d4 + 2 (1 + 1 + 2)", [](Ctx& c) { return double(Mob(c)->GetHealth()); }, 54);
+            Expect(s, "and it's gone", [](Ctx& c) { return MobC(c)->carrying.empty(); });
+        });
+        add("carried.a_creature_reads_its_scroll", [=](Script& s)
+        {
+            AddBot(s, fig5);
+            MobOpt m = stuckAt(8.f);
+            m.st.carries = { { 10306, 100 } };
+            AddMob(s, m);
+            StartFight(s);
+            Act(s, [](Ctx& c) { Remember(c); sMsgs.clear(); });
+            Rig(s, {}, 1);
+            NextTurn(s, true);
+            ExpectSaw(s, "reads it aloud");
+            ExpectSaw(s, "DC 15");
+            ExpectEq(s, "Blight: a failed CON save, 8d8 (eight 1s)", [](Ctx& c) { return c.v["bothp"] - float(Bot(c)->GetHealth()); }, 8);
+            Expect(s, "the scroll is spent", [](Ctx& c) { return MobC(c)->carrying.empty(); });
+        });
+        add("carried.what_it_kept_falls_to_the_winners", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, stuckAt(8.f));
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                uint32 before = Bot(c)->GetItemCount(118, false);
+                MobC(c)->carrying = { 118 };
+                CreatureDrops(*EncounterOf(Bot(c)->GetGUID()), { Bot(c) });
+                CheckEq(c, double(Bot(c)->GetItemCount(118, false) - before), 1, "the potion it didn't drink");
+                Check(c, MobC(c)->carrying.empty(), "and it's not dropped twice");
+            });
+        });
+
+        // ============================================================ the casting creatures (tools/casters.py)
+        add("casters.dc_and_attack_from_the_stat_block", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            MobOpt m;
+            m.st.abil[INT] = 16;
+            AddMob(s, m);
+            Act(s, [](Ctx& c)
+            {
+                CheckEq(c, CreatureSpellDC(Mob(c)), 13, "DC 8 + 2 + INT 3");
+                CheckEq(c, CreatureSpellAttack(Mob(c)), 5, "+2 + INT 3");
+            });
+            MobOpt boss;
+            boss.dx = 3.f;
+            boss.st = Stats(BEAST);
+            boss.st.abil[CHA] = 18;
+            boss.st.xp = 1800;
+            AddMob(s, boss);
+            Act(s, [](Ctx& c) { CheckEq(c, CreatureSpellDC(Mob(c, 1)), 15, "CR 5: proficiency 3, CHA 4: DC 15"); });
+        });
+        add("casters.a_creature_holds_a_player", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            MobOpt m = stuckAt(8.f);
+            m.st.abil[WIS] = 14;
+            m.st.spells = { { SPELL_HOLD_PERSON, 1 } };
+            AddMob(s, m);
+            StartFight(s);
+            Rig(s, {}, 1);
+            Act(s, [](Ctx& c) { sMsgs.clear(); Prep(Bot(c), SPELL_END_TURN); Bot(c)->CastSpell(Bot(c), SPELL_END_TURN, false); });
+            s.Until([](Ctx& c) { return BotC(c)->held; }, "the creature's Hold Person to land (the WIS save rolls 1s)", 15000);
+            Expect(s, "it holds its concentration on it, and the use is spent", [](Ctx& c)
+            {
+                return MobC(c)->concentration == SPELL_HOLD_PERSON && MobC(c)->castUsed[0] == 1 && BotC(c)->heldBy == Mob(c)->GetGUID();
+            });
+            ExpectSaw(s, "casts |cffd080ffHold Person");
+            Act(s, [](Ctx& c)
+            {
+                DamageCtx d;
+                d.attacker = Bot(c);
+                d.victim = Mob(c);
+                d.amount = 30;
+                d.type = DMG_FORCE;
+                sDice.assign({ 1, 1 });
+                ApplyDamage(d);
+                sDice.clear();
+                Check(c, MobC(c)->concentration == 0 && !BotC(c)->held, "30 damage, a CON save of 1 against DC 15: the hold breaks");
+            });
+        });
+        add("casters.a_creature_heals_a_hurt_friend", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            MobOpt healer = stuckAt(8.f);
+            healer.st.abil[WIS] = 14;
+            healer.st.spells = { { SPELL_HEALING_WORD, 1 } };
+            AddMob(s, healer);
+            MobOpt hurt = stuckAt(9.f, 1.f);
+            hurt.st = Stats(BEAST);                       // (its own entry: test stat blocks go by entry)
+            hurt.st.speed = 0.f;
+            AddMob(s, hurt);
+            StartFight(s);
+            Act(s, [](Ctx& c) { Mob(c, 1)->SetHealth(100); });
+            Rig(s, {}, 1);
+            NextTurn(s, true);
+            ExpectEq(s, "1d4 (1) + WIS 2", [](Ctx& c) { return double(Mob(c, 1)->GetHealth()); }, 103);
+            Expect(s, "once a fight", [](Ctx& c) { return MobC(c, 0)->castUsed[0] == 1; });
+        });
+
         // ============================================================ special arrows and grenades
         // (a level 1 rogue: DEX 16, +3; proficient with the shortbow, +2 - a 15 hits AC 10. Grenades: DC 13 DEX, the test
         // creature has DEX 10)
@@ -6849,6 +7773,63 @@ namespace
             s.Wait(1000);
             ExpectCastOk(s);
             ExpectEq(s, "healed to 5", [](Ctx& c) { return double(Bot(c)->GetHealth()); }, 5);
+        });
+
+        // ============================================================ the merchants' prize pieces (tools/premium.py)
+        add("prize.every_shop_keeps_one", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                VendorItemData const* v = sObjectMgr->GetNpcVendorItemList(945);
+                Check(c, v && v->FindItemCostPair(33791, 0), "Rybrad Coldbank sells the Anvilmar Longsword +1");
+                ItemTemplate const* t = sObjectMgr->GetItemTemplate(33791);
+                Check(c, t && t->BuyPrice == 1000 * 100, "for 1000 gp (10 gold)");
+                Check(c, t && t->ItemStat[0].ItemStatType == ITEM_MOD_HIT_RATING && t->ItemStat[0].ItemStatValue == 1, "+1");
+            });
+        });
+        add("prize.plus_one_armour", [=](Script& s)
+        {
+            AddBot(s, { FIGHTER, 1 });
+            Act(s, [](Ctx& c) { Equip(Bot(c), EQUIPMENT_SLOT_CHEST, 7930); });
+            ExpectEq(s, "the Ormsen Chain Mail +1: heavy, AC 17", [](Ctx& c) { return double(ArmorClass(Bot(c))); }, 17);
+        });
+        add("prize.a_wand_casts_and_recharges", [=](Script& s)
+        {
+            // a fighter knows no spells: the wand's Magic Missile, no slot - three darts, 1d4 + 1 each (every die a 1: 2)
+            AddBot(s, { FIGHTER, 1 });
+            Act(s, [](Ctx& c) { Bot(c)->AddItem(11287, 1); });
+            AddMob(s, { 6.f, 0.f });
+            StartFight(s);
+            Rig(s, {}, 1);
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                Item* wand = p->GetItemByEntry(11287);
+                Check(c, wand && wand->GetSpellCharges(0) == 3, "a new wand: 3 charges");
+                if (!wand)
+                    return;
+                Remember(c);
+                ClearMsgs();
+                Prep(p, SPELL_MAGIC_MISSILE);
+                c.v["cast"] = float(p->CastSpell(Mob(c), SPELL_MAGIC_MISSILE, TRIGGERED_NONE, wand));
+            });
+            s.Wait(1000);
+            ExpectCastOk(s);
+            ExpectDrop(s, 6, 0, "three darts of 1d4 (1) + 1");
+            ExpectSaw(s, "You raise the wand");
+            Expect(s, "two charges left, and the wand kept", [](Ctx& c)
+            {
+                Item* wand = Bot(c)->GetItemByEntry(11287);
+                return wand && wand->GetSpellCharges(0) == 2;
+            });
+            Act(s, [](Ctx& c)
+            {
+                AbandonFight(Bot(c));
+                LongRest(Bot(c));
+                Item* wand = Bot(c)->GetItemByEntry(11287);
+                Check(c, wand && wand->GetSpellCharges(0) == 3, "a long rest: all three back");
+            });
         });
 
         // ============================================================ concentration
@@ -7288,7 +8269,7 @@ namespace
             Expect(s, "the junk changed nothing on the sheet", [](Ctx& c)
             {
                 Sheet& sh = GetSheet(Bot(c));
-                return sh.abil[STR] == 16 && sh.subclass.empty() && sh.picks.size() == 1;
+                return sh.abil[STR] == 16 && sh.subclass.empty() && sh.picks.size() == 2;   // (the style and the subrace)
             });
         });
 
@@ -7329,6 +8310,9 @@ namespace
                                 out = { "CON" };
                             else if (kind == "feat1")
                                 out = { "Tough", "Alert" };
+                            else if (kind == "subrace")
+                                for (char const* name : SubracesOf(p->getRace()))
+                                    out.push_back(name);
                             return out;
                         };
                         auto resolve = [&](int lvl)

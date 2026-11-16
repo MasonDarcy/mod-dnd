@@ -278,8 +278,8 @@ namespace Dnd
         int hp = hitDie + con + (lvl - 1) * (hitDie / 2 + 1 + con);
         if (HasFeat(p, "Tough"))
             hp += 2 * lvl;                                // Tough: +2 HP per level
-        if (p->getRace() == RACE_DWARF)
-            hp += lvl;                                    // Dwarven Toughness: +1 HP per level
+        if (IsSubrace(p, "Hill Dwarf"))
+            hp += lvl;                                    // Dwarven Toughness (hill dwarves): +1 HP per level
         hp += ClassHpBonus(p);                            // Draconic Resilience
         return std::max(1, hp);
     }
@@ -330,7 +330,9 @@ namespace Dnd
 
     float Speed(Player* p)
     {
-        float speed = (p->getRace() == RACE_DWARF || p->getRace() == RACE_GNOME) ? 7.5f : 9.f;
+        float speed = (p->getRace() == RACE_DWARF || (p->getRace() == RACE_GNOME && !IsSubrace(p, "Forest Gnome"))) ? 7.5f : 9.f;
+        if (IsSubrace(p, "Sentinel"))
+            speed += 1.5f;                   // Fleet of Foot
         if (p->getRace() != RACE_DWARF && GetSheet(p).abil[STR] < HeavyArmorStrNeeded(p))
             speed -= 3.f;
         if (HasFeat(p, "Mobile"))
@@ -492,7 +494,7 @@ namespace Dnd
         sStats.clear();
         if (QueryResult r = WorldDatabase.Query("SELECT entry, ac, hp, speed, str, dex, con, intel, wis, cha, "
             "melee_name, melee_bonus, melee_dice, melee_type, ranged_name, ranged_bonus, ranged_dice, ranged_type, ranged_range, "
-            "xp, resist, immune, vuln, venom FROM dnd_creature"))
+            "xp, resist, immune, vuln, venom, spells, carries FROM dnd_creature"))
         {
             do
             {
@@ -522,6 +524,33 @@ namespace Dnd
                 {
                     s.venomDc = std::atoi(venom.substr(0, colon).c_str());
                     s.venom = Dice::Parse(venom.substr(colon + 1));
+                }
+                // "201301,201311:2,200124:1": spell ids, each with its uses a fight (none: at will)
+                std::string spellList = f[24].Get<std::string>();
+                for (std::string_view v : Acore::Tokenize(spellList, ',', false))
+                {
+                    std::string one(v);
+                    if (one.empty() || s.spells.size() >= 8)
+                        continue;
+                    CreatureSpell cs;
+                    size_t colon = one.find(':');
+                    cs.id = uint32(std::atoi(one.substr(0, colon).c_str()));
+                    cs.uses = colon == std::string::npos ? 0 : uint8(std::atoi(one.substr(colon + 1).c_str()));
+                    if (CanCreatureCast(cs.id))
+                        s.spells.push_back(cs);
+                    else
+                        LOG_ERROR("module", "mod-dnd: creature {} lists spell {}, which creatures can't cast", s.entry, cs.id);
+                }
+                // "118:30,10305:10": items it may have on it, each with its chance in percent
+                std::string carryList = f[25].Get<std::string>();
+                for (std::string_view v : Acore::Tokenize(carryList, ',', false))
+                {
+                    std::string one(v);
+                    size_t colon = one.find(':');
+                    if (one.empty() || colon == std::string::npos)
+                        continue;
+                    s.carries.emplace_back(uint32(std::atoi(one.substr(0, colon).c_str())),
+                        uint8(std::clamp(std::atoi(one.substr(colon + 1).c_str()), 0, 100)));
                 }
                 sStats[s.entry] = s;
             } while (r->NextRow());
@@ -788,12 +817,29 @@ namespace Dnd
 
     int AbilityMod(Unit* u, Ability a) { return Mod(AbilityScore(u, a)); }
 
+    // Haste +2, Slow -2 (while their casters hold them)
+    static int SpellAcMods(Combatant* c)
+    {
+        if (!c)
+            return 0;
+        auto held = [](ObjectGuid by, uint32 spell)
+        {
+            Combatant* b = by.IsEmpty() ? nullptr : CombatantOf(by);
+            return b && b->concentration == spell;
+        };
+        return (held(c->hastedBy, SPELL_HASTE) ? 2 : 0) - (held(c->slowBy, SPELL_SLOW) ? 2 : 0);
+    }
+
     int ArmorClass(Unit* u)
     {
         if (Creature* c = u->ToCreature())
         {
             Combatant* cc = CombatantOf(c->GetGUID());
-            return StatsOrDefault(c).ac - (cc && cc->corroded ? 2 : 0);     // acid eating at its hide
+            int ac = StatsOrDefault(c).ac - (cc && cc->corroded ? 2 : 0);   // acid eating at its hide
+            if (cc && !cc->faithBy.IsEmpty())
+                if (Combatant* fc = CombatantOf(cc->faithBy); fc && fc->concentration == SPELL_SHIELD_OF_FAITH)
+                    ac += 2;                     // a creature's Shield of Faith
+            return ac + SpellAcMods(cc);
         }
         Player* p = u->ToPlayer();
         if (!p)
@@ -831,6 +877,9 @@ namespace Dnd
         if (p->HasAura(SPELL_MAGE_ARMOR))
             base = std::max(base, 13 + dex);
         base = std::max(base, UnarmoredBase(p));         // Unarmored Defense, Draconic Resilience
+        if (Item* chest = p->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_CHEST); armoured && chest && IsSubrace(p, "Mountain Dwarf") &&
+            (chest->GetTemplate()->SubClass == ITEM_SUBCLASS_ARMOR_MAIL || chest->GetTemplate()->SubClass == ITEM_SUBCLASS_ARMOR_PLATE))
+            bonus += 1;                      // Dwarven Armour Training (mountain dwarves): medium or heavy armour
         if (armoured && HasStyle(p, "Defense"))
             bonus += 1;                      // Fighting Style: Defense
         if (BeastForm const* f = WildShapeOf(p))
@@ -845,6 +894,7 @@ namespace Dnd
                     ac += 2;                 // Shield of Faith
             if (c->corroded)
                 ac -= 2;                     // acid
+            ac += SpellAcMods(c);
         }
         return ac;
     }
@@ -948,6 +998,35 @@ namespace Dnd
             }
             amount = WeatherDamage(d.victim, amount, d.type, vuln, resisted, note);
         }
+        bool physical = d.type == DMG_BLUDGEONING || d.type == DMG_PIERCING || d.type == DMG_SLASHING;
+        if (Combatant* vb = CombatantOf(d.victim->GetGUID()); vb && !vb->banishedBy.IsEmpty())
+            return 0;                        // banished: it isn't here
+        if (amount > 0 && physical)
+            if (Combatant* sk = CombatantOf(d.victim->GetGUID()); sk && !sk->stoneskinBy.IsEmpty())
+                if (Combatant* by = CombatantOf(sk->stoneskinBy); by && by->concentration == SPELL_STONESKIN)
+                {
+                    amount /= 2;
+                    note += " (Stoneskin: halved)";
+                }
+        if (amount > 0 && d.type == DMG_COLD)
+            if (Combatant* fs = CombatantOf(d.victim->GetGUID()); fs && fs->fireShield)
+            {
+                amount /= 2;
+                note += " (Fire Shield: halved)";
+            }
+        if (amount > 0 && physical)
+            if (Combatant* bw = CombatantOf(d.victim->GetGUID()); bw && bw->bladeWard)
+            {
+                amount /= 2;
+                note += " (Blade Ward: halved)";
+            }
+        if (amount > 0 && d.attacker && (physical || d.melee))
+            if (Combatant* en = CombatantOf(d.attacker->GetGUID()); en && !en->enfeebledBy.IsEmpty())
+                if (Combatant* by = CombatantOf(en->enfeebledBy); by && by->concentration == SPELL_RAY_OF_ENFEEBLEMENT)
+                {
+                    amount /= 2;
+                    note += " (enfeebled: halved)";
+                }
         uint32 absorbed = 0;
         if (Player* p = d.victim->ToPlayer())
         {
@@ -968,6 +1047,11 @@ namespace Dnd
                     }
                 }
             // gear: resistance to a damage type (it doesn't stack with Rage's), and flat reduction of damage from enemies
+            if (amount > 0 && RacialResists(p, d.type) && note.find("resisted") == std::string::npos)
+            {
+                amount /= 2;
+                note += " (resisted: their blood)";
+            }
             if (amount > 0 && ItemResists(p, d.type) && note.find("resisted") == std::string::npos)
             {
                 amount /= 2;
@@ -1007,6 +1091,13 @@ namespace Dnd
                 EndWildShape(p, " - the beast falls, and the rest of the blow is yours");
         }
 
+        if (amount > 0 && amount >= int(d.victim->GetHealth()) && !IsDowned(d.victim))
+            if (Combatant* dw = CombatantOf(d.victim->GetGUID()); dw && dw->deathWard)
+            {
+                dw->deathWard = false;
+                amount = int(d.victim->GetHealth()) - 1;
+                note += " (Death Ward: still standing, at 1 hit point)";
+            }
         // a brawl: a blow that would drop anyone to 0 leaves them at 1 and out cold instead (nobody dies in a bar fight)
         bool knockOut = false;
         if (Encounter* be = EncounterOf(d.victim->GetGUID()); be && be->brawl && amount > 0 && amount >= int(d.victim->GetHealth()))
@@ -1084,6 +1175,30 @@ namespace Dnd
                     --thornDepth;
                 }
         }
+        if (d.attacker && d.attacker != d.victim && d.attacker->IsAlive() && d.melee && amount + int(absorbed) > 0 &&
+            d.attacker->IsPlayer() != d.victim->IsPlayer())
+            if (Combatant* fs = CombatantOf(d.victim->GetGUID()); fs && fs->fireShield)
+            {
+                static int shieldDepth = 0;
+                if (shieldDepth == 0)
+                {
+                    ++shieldDepth;
+                    std::string detail;
+                    DamageCtx back;
+                    back.attacker = d.victim;
+                    back.victim = d.attacker;
+                    back.amount = Dice{ 2, 8, 0 }.Roll(false, detail);
+                    back.type = DMG_FIRE;
+                    if (Encounter* fe = EncounterOf(d.victim->GetGUID()))
+                        for (Combatant const& c : fe->order)
+                            if (c.player)
+                                if (Player* lp = ObjectAccessor::FindPlayer(c.guid))
+                                    Log(lp, Acore::StringFormat("   {}'s Fire Shield burns {}: {} = {} Fire", Name(d.victim), Name(d.attacker),
+                                        detail, back.amount));
+                    ApplyDamage(back);
+                    --shieldDepth;
+                }
+            }
         if (knockDown)
             KnockDown(d.victim->ToPlayer());        // (concentration ends with it)
         if (knockOut)
@@ -1091,6 +1206,8 @@ namespace Dnd
         AfterDamage(d, amount, int(absorbed));     // Armor of Agathys, Hellish Rebuke, the patrons' gifts
         if (Player* p = d.victim->ToPlayer(); p && !knockDown)
             ConcentrationCheck(p, amount + int(absorbed), d.attacker);   // (damage soaked by temporary HP still counts)
+        else if (d.victim->ToCreature())
+            ConcentrationCheck(d.victim, amount, d.attacker);            // a casting creature's hold on its spell
         return amount;
     }
 

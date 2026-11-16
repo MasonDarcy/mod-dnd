@@ -76,6 +76,51 @@ namespace Dnd
         SPELL_STINKING_CLOUD    = 201232,   // 3rd: CON save at the start of a turn in it, or the turn is lost
         SPELL_HUNGER_OF_HADAR   = 201233,   // 3rd (warlock): cold at the start of a turn in it; difficult terrain
         SPELL_SLEET_STORM       = 201234,   // 3rd: DEX save at the start of a turn in it, or prone; difficult terrain
+        // the third batch of 5e spells (no reactions), and what the creatures cast (CreatureCast)
+        SPELL_THORN_WHIP        = 201701,   // cantrip: spell attack, piercing; pulled 3 m closer
+        SPELL_FROSTBITE         = 201702,   // cantrip: CON save, cold; disadvantage on its next attack
+        SPELL_MIND_SLIVER       = 201703,   // cantrip: INT save, psychic; -1d4 on its next save
+        SPELL_WORD_OF_RADIANCE  = 201704,   // cantrip: foes within 1.5 m, CON save, radiant
+        SPELL_THUNDERCLAP       = 201705,   // cantrip: foes within 1.5 m, CON save, thunder
+        SPELL_INFESTATION       = 201706,   // cantrip: CON save, poison; mites drive it 1.5 m
+        SPELL_PRIMAL_SAVAGERY   = 201707,   // cantrip: melee spell attack, acid
+        SPELL_BLADE_WARD        = 201708,   // cantrip: weapon damage halved until your next turn
+        SPELL_CREATE_BONFIRE    = 201709,   // cantrip (concentration): a fire on the ground, DEX save at a turn start in it
+        SPELL_COMMAND           = 201711,   // 1st: WIS save or it loses its next turn
+        SPELL_HIDEOUS_LAUGHTER  = 201712,   // 1st (concentration): WIS save or prone and helpless with laughter
+        SPELL_BANE              = 201713,   // 1st (concentration): three foes, CHA save or -1d4 on attacks and saves
+        SPELL_EARTH_TREMOR      = 201714,   // 1st: foes within 3 m, DEX save, bludgeoning and prone
+        SPELL_CATAPULT          = 201715,   // 1st: DEX save, bludgeoning
+        SPELL_CHAOS_BOLT        = 201716,   // 1st (sorcerer): spell attack, a random type; doubles leap on
+        SPELL_SANCTUARY         = 201717,   // 1st, bonus: a foe that would attack the ward makes a WIS save or turns elsewhere
+        SPELL_COLOR_SPRAY       = 201718,   // 1st: a pool of hit points' worth, weakest first, blinded to your next turn
+        SPELL_SPIRITUAL_WEAPON  = 201721,   // 2nd, bonus: a floating weapon strikes; again each turn with no slot
+        SPELL_ACID_ARROW        = 201722,   // 2nd: spell attack, acid now and more at its next turn
+        SPELL_BLINDNESS         = 201723,   // 2nd: CON save or blinded (a save each turn)
+        SPELL_MIRROR_IMAGE      = 201724,   // 2nd: three illusory doubles take attacks meant for you
+        SPELL_MIND_SPIKE        = 201725,   // 2nd: WIS save, psychic
+        SPELL_SNOWBALL_SWARM    = 201726,   // 2nd: a 3 m burst, DEX save, cold
+        SPELL_FLAMING_SPHERE    = 201727,   // 2nd (concentration): a ball of fire, DEX save at a turn start beside it
+        SPELL_RAY_OF_ENFEEBLEMENT = 201728, // 2nd (concentration): spell attack; its weapons deal half damage
+        SPELL_HASTE             = 201731,   // 3rd (concentration): +2 AC, double speed, one more swing; lethargy after
+        SPELL_SLOW              = 201732,   // 3rd (concentration): up to six foes, WIS save: -2 AC, half speed, no reactions
+        SPELL_DISPEL_MAGIC      = 201733,   // 3rd: an ally's spell conditions end, or a foe's spells on itself
+        SPELL_THUNDER_STEP      = 201734,   // 3rd: teleport; thunder where you stood
+        SPELL_TIDAL_WAVE        = 201735,   // 3rd: a 4.5 m wave, DEX save, bludgeoning and prone
+        SPELL_AURA_OF_VITALITY  = 201736,   // 3rd (concentration), bonus: 2d6 healing; again each turn with no slot
+        SPELL_REVIVIFY          = 201737,   // 3rd: a friend who fell in this fight comes back with 1 hit point
+        // 4th level: past the slots of levels 1 - 6 - read from scrolls, and cast by the strongest creatures
+        SPELL_ICE_STORM         = 201741,   // a 6 m storm: DEX save, 2d8 Bludgeoning and 4d6 Cold
+        SPELL_BLIGHT            = 201742,   // CON save, 8d8 Necrotic
+        SPELL_VITRIOLIC_SPHERE  = 201743,   // a 6 m burst: DEX save, 10d4 Acid; a failure burns 5d4 more next turn
+        SPELL_BANISHMENT        = 201744,   // (concentration) CHA save or gone for up to ten turns
+        SPELL_GREATER_INVISIBILITY = 201745, // (concentration) unseen: attacks by it advantage, on it disadvantage
+        SPELL_STONESKIN         = 201746,   // (concentration) bludgeoning, piercing and slashing halved
+        SPELL_DEATH_WARD        = 201747,   // the first blow that would drop them leaves them at 1 hit point
+        SPELL_DIMENSION_DOOR    = 201748,   // teleport up to 45 m
+        SPELL_BLACK_TENTACLES   = 201749,   // (concentration) a 6 m patch: DEX save or 3d6 and restrained, each turn
+        SPELL_PHANTASMAL_KILLER = 201750,   // (concentration) WIS save or terrified, 4d10 Psychic each turn it fails again
+        SPELL_FIRE_SHIELD       = 201751,   // cold halved, 2d8 Fire to whoever hits you in melee
         // the cleric (WoW Death Knight)
         SPELL_SACRED_FLAME      = 201301,   // cantrip: DEX save, radiant
         SPELL_TOLL_THE_DEAD     = 201302,   // cantrip: WIS save, necrotic - a d12 against the wounded
@@ -298,6 +343,12 @@ namespace Dnd
         bool valid() const { return dice.sides > 0 || dice.bonus > 0; }
     };
 
+    struct CreatureSpell
+    {
+        uint32 id = 0;                       // the player spell it casts (its name, look and rules)
+        uint8 uses = 0;                      // a fight (0: at will)
+    };
+
     struct CreatureStats
     {
         uint32 entry = 0;
@@ -309,6 +360,8 @@ namespace Dnd
         uint32 resist = 0, immune = 0, vuln = 0;   // bit per DmgType
         int venomDc = 0;                     // melee hits: CON save or take 'venom' poison damage and be Poisoned (half on a save)
         Dice venom;
+        std::vector<CreatureSpell> spells;   // what it casts (tools/casters.py): DC and attack from its best mental ability
+        std::vector<std::pair<uint32, uint8>> carries;   // items it may have on it, with the chance (tools/carried.py)
     };
 
     CreatureStats const* GetStats(uint32 entry);
@@ -547,6 +600,33 @@ namespace Dnd
         uint8 corroded = 0;                  // acid: -2 AC; turn starts until it wears off
         uint8 legendary = 0, legendaryMax = 0;   // (a lone creature against a party) legendary actions left / a round
         bool lairHeld = false;               // held by a lair action's grip until the next round's top
+        // the third batch of spells
+        ObjectGuid sliverBy;                 // Mind Sliver: -1d4 on its next save (gone at the caster's next turn)
+        bool bladeWard = false;              // Blade Ward: bludgeoning, piercing and slashing halved until its next turn
+        bool commanded = false;              // Command: its next turn is lost
+        ObjectGuid laughingBy;               // Hideous Laughter: prone and helpless; a WIS save each turn
+        ObjectGuid banedBy;                  // Bane: -1d4 on attacks and saves
+        ObjectGuid sanctuaryBy;              // Sanctuary: a foe that would attack it makes a WIS save first
+        bool blinded = false;                // blinded: its attacks at disadvantage, attacks on it at advantage
+        ObjectGuid blindedBy;                // ...whose spell (Color Spray: to that caster's next turn)
+        bool blindSave = false;              // ...Blindness: a CON save at the start of each of its turns ends it
+        bool spiritWeapon = false;           // (a cleric) the Spiritual Weapon is out: it strikes again with no slot
+        uint8 acidDice = 0;                  // Acid Arrow: this many d4 of acid at the start of its next turn
+        ObjectGuid acidBy;
+        uint8 images = 0;                    // Mirror Image: doubles left
+        ObjectGuid enfeebledBy;              // Ray of Enfeeblement: its weapons deal half damage
+        ObjectGuid hastedBy;                 // Haste: +2 AC, double speed, one more swing
+        bool lethargic = false;              // Haste ended: its next turn is lost
+        ObjectGuid slowBy;                   // Slow: -2 AC, half speed, no reactions, -2 DEX saves
+        std::array<uint8, 8> castUsed{};     // (a creature) its spells' uses this fight, in stat-block order
+        // 4th level
+        ObjectGuid banishedBy;               // Banishment: elsewhere - no turns, nothing reaches it...
+        uint8 banishLeft = 0;                // ...for this many of its turns at most
+        ObjectGuid invisibleBy, stoneskinBy; // Greater Invisibility, Stoneskin (while their casters hold them)
+        bool deathWard = false;              // Death Ward: the first blow that would drop it leaves 1 hit point
+        ObjectGuid killerBy;                 // Phantasmal Killer: terrified; 4d10 Psychic each turn it fails its save
+        bool fireShield = false;             // Fire Shield: cold halved, 2d8 Fire back at a melee attacker
+        std::vector<uint32> carrying;        // (a creature) the potions and scrolls it has on it (tools/carried.py)
     };
 
     struct Area
@@ -590,6 +670,8 @@ namespace Dnd
         uint8 aiStrikeStage = 0;             // 0 = rolled, ready stance; 1 = swinging / missile away
         int weatherRound = 0;                // the last round the weather had its say (blizzard cold, lightning)
         int lairLast = -1;                   // the lair action taken last round (never the same twice running)
+        int aiCast = -1;                     // the creature's spell this turn (its stat block's index), or -1
+        Position aiCastAt;                   // ...aimed at this spot (an area)
         std::vector<ObjectGuid> lairCalled;  // who a lair action has called in
 
         Combatant* Find(ObjectGuid g);
@@ -749,7 +831,24 @@ namespace Dnd
     bool IsConcentrationSpell(uint32 id);
     bool ConcentrationLive(Encounter const& e, Combatant const& caster);   // still holding someone (Hex: always)
     void EndConcentration(Unit* caster, std::string const& why);
-    void ConcentrationCheck(Player* p, int damage, Unit* attacker);
+    void ConcentrationCheck(Unit* u, int damage, Unit* attacker);       // a player's or a casting creature's
+    // the casting creatures (DndSpells.cpp; stat blocks' spells, tools/casters.py): the AI picks a spell that suits
+    // (a crowd for a blast, a hurt ally for a heal, someone not yet held for a hold), the creature's spells resolve
+    // with its own DC and attack bonus, and leveled spells have a few uses a fight
+    int CreatureSpellDC(Creature* c);
+    int CreatureSpellAttack(Creature* c);
+    bool CreaturePlanCast(Encounter& e, Creature* cr, bool beforeMove = false);   // a spell to cast from here: e.aiCast, aiTarget
+    void CreatureCastVisual(Encounter& e, Creature* cr); // the cast itself (the spell's look)
+    void CreatureCastResolve(Encounter& e, Creature* cr);// ...and what it does
+    int ConditionDC(ObjectGuid by);          // the save DC of whoever laid a condition (a player's or a creature's)
+    void SpellTurnReset(Encounter& e, Combatant& c);     // a turn begins: short spells run out, Haste / Slow on its speed
+    bool SpellTurnStart(Encounter& e, Combatant& c, Unit* u);   // ...acid, saves, lost turns (true: the turn is lost)
+    bool SanctuaryHolds(Creature* cr, Unit* ward);       // a creature would attack someone warded: true if it can't
+    // what a creature carries (tools/carried.py): rolled as it joins a fight; a potion when it's hurt, a scroll's spell when
+    // it suits; what it didn't use falls to the players who won (their first clear)
+    void RollCarried(Combatant& c, Creature* cr);
+    void CreatureDrops(Encounter& e, std::vector<Player*> const& takers);
+    bool CanCreatureCast(uint32 spellId);    // a spell the creature engine knows (tools/casters.py may list it)
     void PrepareCreatureAttack(Creature* c, Unit* target, bool ranged);   // roll now (the roll feed shows it)...
     void ApplyPendingAttack(Unit* attacker);                              // ...land it later
     uint32 CreatureMissile(Creature* c);                                 // the missile spell a creature's ranged attack flies as
@@ -767,6 +866,14 @@ namespace Dnd
     void HandlePick(Player* p, std::string const& what);
     void ClearLevelChoices(Player* p);
     bool HasFeat(Player* p, char const* feat);                  // "Resilient" matches any of its variants
+    // subraces (DndLevels.cpp): chosen at level 1, before the starting feat ("pick^subrace^Hill Dwarf" -> "subrace:Hill Dwarf");
+    // the race's own traits plus the subrace's
+    std::vector<char const*> SubracesOf(uint8 race);            // empty: the race has none (it isn't asked)
+    bool IsSubrace(Player* p, char const* name);
+    bool RacialSaveAdvantage(Player* p, Ability a, std::string const& what, bool poison);   // by what the save is against
+    bool RacialResists(Player* p, DmgType type);
+    bool RacialSkill(Player* p, char const* skill);             // a skill proficiency the race or subrace gives
+    bool RacialWeapon(Player* p, uint32 itemSubclass);          // a weapon the race is trained with
     std::string FeatOption(Player* p, char const* feat);        // the variant taken: "CON", "Fire" ("" none / not taken)
     bool WearsHeavyArmour(Player* p);
     bool IsSpellAction(uint32 spellId);      // a cantrip or a slot spell (not a weapon attack or a class action)
@@ -894,9 +1001,13 @@ namespace Dnd
     {
         STATUS_ASLEEP = 201501, STATUS_HELD, STATUS_RESTRAINED, STATUS_ENTRANCED, STATUS_FRIGHTENED, STATUS_TURNED, STATUS_POISONED,
         STATUS_BURNING, STATUS_OUTLINED, STATUS_BLESSED, STATUS_SHIELD_OF_FAITH, STATUS_BARKSKIN, STATUS_BLUR,
-        STATUS_SPIRIT_GUARDIANS, STATUS_CONCENTRATING, STATUS_HEROISM, STATUS_STUNNED, STATUS_LAST = STATUS_STUNNED,
+        STATUS_SPIRIT_GUARDIANS, STATUS_CONCENTRATING, STATUS_HEROISM, STATUS_STUNNED, STATUS_BLINDED, STATUS_BANED,
+        STATUS_HASTED, STATUS_SLOWED, STATUS_SANCTUARY, STATUS_MIRROR_IMAGE, STATUS_ENFEEBLED, STATUS_LAUGHING, STATUS_BLADE_WARD,
+        STATUS_BANISHED, STATUS_INVISIBLE, STATUS_STONESKIN, STATUS_DEATH_WARD, STATUS_FIRE_SHIELD,
+        STATUS_LAST = STATUS_FIRE_SHIELD,
         STATUS_MARKER = 201550,              // the hover preview's arrow over whoever an area spell would catch
         GROUND_CLOUD_OF_DAGGERS = 201601, GROUND_MOONBEAM, GROUND_STINKING_CLOUD, GROUND_HUNGER_OF_HADAR, GROUND_SLEET_STORM,
+        GROUND_BONFIRE, GROUND_FLAMING_SPHERE, GROUND_BLACK_TENTACLES,
         ELIXIR_AURA_BASE = 201660,           // + the elixir's place among the elixirs' stock spells, in order
         ELIXIR_AURA_LAST = 201679,
     };
