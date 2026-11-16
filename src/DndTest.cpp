@@ -3664,6 +3664,33 @@ namespace
                     StoryTestSet(k, 0);
             });
         });
+        add("story.the_world_follows_the_story", [=](Script& s)
+        {
+            // (the campaign's own flags, set quietly for a moment and put back as they were)
+            Act(s, [](Ctx& c)
+            {
+                c.v["regent"] = StoryValue("story:regent_gone");
+                c.v["council"] = StoryValue("story:moira_council");
+                StoryTestSet("story:regent_gone", 0);
+                StoryTestSet("story:moira_council", 0);
+            });
+            Expect(s, "as things stand: the usual openings, everyone there", [](Ctx&)
+            {
+                return StoryStartNode(158, 15801) == 15801 && StoryStartNode(178, 17801) == 17801 && !StoryAbsent(180);
+            });
+            Act(s, [](Ctx&) { StoryTestSet("story:moira_council", 1); });
+            Expect(s, "a council called: the plotters open on the news", [](Ctx&) { return StoryStartNode(158, 15801) == 15809; });
+            Act(s, [](Ctx&) { StoryTestSet("story:regent_gone", 1); });
+            Expect(s, "the regent gone: the plotters celebrate, the refugees go home, the envoy has left", [](Ctx&)
+            {
+                return StoryStartNode(158, 15801) == 15808 && StoryStartNode(178, 17801) == 17808 && StoryAbsent(180);
+            });
+            Act(s, [](Ctx& c)
+            {
+                StoryTestSet("story:regent_gone", int(c.v["regent"]));
+                StoryTestSet("story:moira_council", int(c.v["council"]));
+            });
+        });
         add("story.an_encounter_ends_once", [=](Script& s)
         {
             Act(s, [](Ctx&) { StoryTestSet("@resolved:999999", 0); StoryOutcome(999999, "fight", nullptr); });

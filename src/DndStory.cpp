@@ -316,9 +316,22 @@ namespace Dnd
 
     void StoryCreatureAdded(Creature* c) { PhaseCreature(c); }
 
-    // the encounters the story took away count as resolved for this character (their XP paid)
+    // the encounters the story took away, and those anyone has already resolved (one shared world: resolved for one is
+    // resolved for all), count as resolved for this character - their XP paid
     void CreditAbsent(Player* p)
     {
+        if (!p || Test::IsBot(p->GetGUID()))
+            return;
+        std::vector<uint32> resolved;
+        for (auto const& [key, value] : sState)
+            if (value && key.rfind("@resolved:", 0) == 0)
+                resolved.push_back(uint32(std::atoi(key.c_str() + 10)));
+        for (uint32 enc : resolved)
+            if (EncounterDef const* def = GetEncounterDef(enc); def && !HasCleared(p, enc))
+            {
+                Log(p, Acore::StringFormat("|cffc8b890{} was settled while you were away - it counts for you too.|r", def->name));
+                OnEncounterWon(p, *def, true, false);
+            }
         for (auto const& [enc, cond] : sAbsent)
             if (StoryConds(cond))
                 if (EncounterDef const* def = GetEncounterDef(enc); def && !HasCleared(p, enc))
