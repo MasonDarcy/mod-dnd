@@ -3602,6 +3602,42 @@ namespace
                     !InCombat(Bot(c)) && !InJig(Bot(c)) && Saw("JX");
             });
         });
+        add("visuals.conditions_areas_and_the_hover_preview", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 2.f, 0.f });
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                Combatant* mc = CombatantOf(Mob(c)->GetGUID());
+                Check(c, mc != nullptr, "the creature is in the fight");
+                if (mc)
+                    mc->asleep = true;
+                Mob(c)->SetStandState(UNIT_STAND_STATE_SLEEP);
+                if (Encounter* e = EncounterOf(Bot(c)->GetGUID()))
+                {
+                    e->areas.push_back(Area{ SPELL_CLOUD_OF_DAGGERS, Mob(c)->GetPosition(), 1.5f,
+                        uint32(GameTime::GetGameTimeMS().count()) + 60000u, Bot(c)->GetGUID() });
+                    SyncVisuals(*e);
+                }
+            });
+            Expect(s, "asleep: it wears the Asleep aura", [](Ctx& c) { return Mob(c)->HasAura(STATUS_ASLEEP); });
+            Expect(s, "Cloud of Daggers: its patch on the ground", [](Ctx& c) { return Bot(c)->GetDynObject(GROUND_CLOUD_OF_DAGGERS) != nullptr; });
+            Act(s, [](Ctx& c)
+            {
+                Bot(c)->learnSpell(SPELL_THUNDERWAVE);
+                SpellInfo const* si = sSpellMgr->GetSpellInfo(SPELL_THUNDERWAVE);
+                AoePreview(Bot(c), si && si->SpellName[0] ? si->SpellName[0] : "");
+            });
+            Expect(s, "hovering Thunderwave marks the creature 2 m away", [](Ctx& c) { return Mob(c)->HasAura(STATUS_MARKER); });
+            Act(s, [](Ctx& c) { AoePreview(Bot(c), ""); });
+            Expect(s, "and the mark goes when the hover does", [](Ctx& c) { return !Mob(c)->HasAura(STATUS_MARKER); });
+            Act(s, [](Ctx& c) { AbandonFight(Bot(c)); });
+            Expect(s, "the fight over: no auras, nothing on the ground", [](Ctx& c)
+            {
+                return !Mob(c)->HasAura(STATUS_ASLEEP) && Bot(c)->GetDynObject(GROUND_CLOUD_OF_DAGGERS) == nullptr;
+            });
+        });
         add("rest.no_hearthing_out_of_a_fight", [=](Script& s)
         {
             AddBot(s, { FIGHTER, 1 });

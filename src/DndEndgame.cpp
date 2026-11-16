@@ -237,6 +237,27 @@ namespace Dnd
         return itr == sElixirSpells.end() ? 0 : itr->second;
     }
 
+    // the elixir's buff (tools/make_patch.py: ELIXIR_AURA_BASE + its place among the elixirs' stock spells, in order)
+    static uint32 ElixirAura(uint32 item)
+    {
+        std::vector<uint32> spells;
+        for (auto const& [spell, it] : sElixirSpells)
+            spells.push_back(spell);
+        std::sort(spells.begin(), spells.end());
+        for (std::size_t i = 0; i < spells.size(); ++i)
+            if (sElixirSpells[spells[i]] == item)
+                return ELIXIR_AURA_BASE + uint32(i);
+        return 0;
+    }
+
+    static void ElixirBuff(Player* p, uint32 item)
+    {
+        for (uint32 id = ELIXIR_AURA_BASE; id <= ELIXIR_AURA_LAST; ++id)
+            p->RemoveAurasDueToSpell(id);
+        if (uint32 aura = item ? ElixirAura(item) : 0)
+            p->AddAura(aura, p);
+    }
+
     void DrinkElixir(Player* p, uint32 item)
     {
         ItemTemplate const* t = sObjectMgr->GetItemTemplate(item);
@@ -249,6 +270,7 @@ namespace Dnd
         s.since = getMSTime();
         s.fought = InCombat(p);
         Log(p, Acore::StringFormat("|cff80c0ffYou drink {}. It lasts until the end of your next fight (or an hour).|r", name));
+        ElixirBuff(p, item);
         if (InCombat(p))                          // drunk mid-fight: what it does at a fight's start, it does now
             if (int th = ItemTempHp(p); th > GetSheet(p).tempHp)
             {
@@ -265,6 +287,7 @@ namespace Dnd
             return;
         ItemTemplate const* t = sObjectMgr->GetItemTemplate(itr->second.item);
         sElixir.erase(itr);
+        ElixirBuff(p, 0);
         if (!why.empty())
             Log(p, Acore::StringFormat("|cff909090{} {}.|r", t ? t->Name1 : "Your elixir", why));
         PushSheet(p);
@@ -274,7 +297,12 @@ namespace Dnd
     {
         auto itr = sElixir.find(p->GetGUID());
         if (itr == sElixir.end())
+        {
+            for (uint32 id = ELIXIR_AURA_BASE; id <= ELIXIR_AURA_LAST; ++id)
+                if (p->HasAura(id))
+                    p->RemoveAurasDueToSpell(id);       // (a buff left from before a restart or a relog)
             return;
+        }
         if (InCombat(p))
             itr->second.fought = true;
         else if (itr->second.fought)

@@ -6,6 +6,7 @@
  */
 #include "Dnd.h"
 #include "SpellMgr.h"
+#include "DynamicObject.h"
 
 #include "Bag.h"
 #include "Config.h"
@@ -220,6 +221,187 @@ namespace Dnd
             c->reactionUsed ? 0 : 1, c->moved, c->moveMax));
     }
 
+    // ------------------------------------------------------------------ what you can see
+    // a lasting area's patch on the ground: (encounter, area spell, owner, where) -> the dynamic object showing it
+    static std::map<std::tuple<uint32, uint32, uint64, int, int>, ObjectGuid> sGround;
+
+    static uint32 GroundVisual(uint32 spell)
+    {
+        switch (spell)
+        {
+            case SPELL_CLOUD_OF_DAGGERS:  return GROUND_CLOUD_OF_DAGGERS;
+            case SPELL_MOONBEAM:          return GROUND_MOONBEAM;
+            case SPELL_STINKING_CLOUD:    return GROUND_STINKING_CLOUD;
+            case SPELL_HUNGER_OF_HADAR:   return GROUND_HUNGER_OF_HADAR;
+            case SPELL_SLEET_STORM:       return GROUND_SLEET_STORM;
+            default:                      return 0;
+        }
+    }
+
+    // a concentration spell with a look of its own on the caster (the rest show "Concentrating")
+    static uint32 ConcentrationVisual(uint32 spell)
+    {
+        switch (spell)
+        {
+            case SPELL_BARKSKIN:          return STATUS_BARKSKIN;
+            case SPELL_BLUR:              return STATUS_BLUR;
+            case SPELL_SPIRIT_GUARDIANS:  return STATUS_SPIRIT_GUARDIANS;
+            default:                      return STATUS_CONCENTRATING;
+        }
+    }
+
+    // every combatant wears the auras of what's on them, and every lasting area has its patch on the ground
+    void SyncVisuals(Encounter& e)
+    {
+        e.lastVisualSync = Now();
+        Unit* anyone = nullptr;
+        for (Combatant& c : e.order)
+        {
+            Unit* u = c.gone ? nullptr : e.GetUnit(c);
+            if (!u || !u->IsInWorld())
+                continue;
+            if (!anyone)
+                anyone = u;
+            std::set<uint32> want;
+            if (c.alive && u->IsAlive())
+            {
+                auto on = [&want](bool yes, uint32 id) { if (yes) want.insert(id); };
+                on(c.asleep, STATUS_ASLEEP);
+                on(c.held || c.lairHeld, STATUS_HELD);
+                on(c.restrained, STATUS_RESTRAINED);
+                on(c.entranced, STATUS_ENTRANCED);
+                on(c.afraid || c.frightened, STATUS_FRIGHTENED);
+                on(c.turned, STATUS_TURNED);
+                on(c.poisoned > 0, STATUS_POISONED);
+                on(!c.burningBy.IsEmpty(), STATUS_BURNING);
+                on(c.outlined, STATUS_OUTLINED);
+                on(!c.blessedBy.IsEmpty(), STATUS_BLESSED);
+                on(!c.faithBy.IsEmpty(), STATUS_SHIELD_OF_FAITH);
+                on(!c.heroismBy.IsEmpty(), STATUS_HEROISM);
+                on(c.stunned > 0, STATUS_STUNNED);
+                if (c.concentration && ConcentrationLive(e, c))
+                    want.insert(ConcentrationVisual(c.concentration));
+            }
+            for (uint32 id = STATUS_ASLEEP; id <= STATUS_LAST; ++id)
+            {
+                bool has = u->HasAura(id);
+                if (want.count(id) && !has)
+                    u->AddAura(id, u);
+                else if (!want.count(id) && has)
+                    u->RemoveAurasDueToSpell(id);
+            }
+        }
+        std::set<std::tuple<uint32, uint32, uint64, int, int>> live;
+        for (Area const& a : e.areas)
+        {
+            uint32 vis = GroundVisual(a.spellId);
+            if (!vis)
+                continue;
+            auto key = std::make_tuple(e.id, a.spellId, a.owner.GetRawValue(), int(a.pos.GetPositionX() * 10.f), int(a.pos.GetPositionY() * 10.f));
+            live.insert(key);
+            if (sGround.count(key))
+                continue;
+            Combatant* oc = e.Find(a.owner);
+            Unit* caster = oc ? e.GetUnit(*oc) : nullptr;
+            if (!caster || !caster->IsInWorld())
+                continue;
+            DynamicObject* d = new DynamicObject();
+            if (!d->CreateDynamicObject(caster->GetMap()->GenerateLowGuid<HighGuid::DynamicObject>(), caster, vis, a.pos, a.radius,
+                DYNAMIC_OBJECT_AREA_SPELL))
+            {
+                delete d;
+                continue;
+            }
+            d->SetDuration(600000);              // (taken away when the area goes)
+            sGround[key] = d->GetGUID();
+        }
+        for (auto itr = sGround.begin(); itr != sGround.end();)
+        {
+            if (std::get<0>(itr->first) != e.id || live.count(itr->first))
+            {
+                ++itr;
+                continue;
+            }
+            if (anyone)
+                if (DynamicObject* d = ObjectAccessor::GetDynamicObject(*anyone, itr->second))
+                    d->Remove();
+            itr = sGround.erase(itr);
+        }
+    }
+
+    // the fight is over: nobody wears its auras, nothing of it stays on the ground
+    static void ClearVisuals(Encounter& e)
+    {
+        Unit* anyone = nullptr;
+        for (Combatant& c : e.order)
+        {
+            Unit* u = c.gone ? nullptr : e.GetUnit(c);
+            if (!u)
+                continue;
+            if (!anyone)
+                anyone = u;
+            for (uint32 id = STATUS_ASLEEP; id <= STATUS_LAST; ++id)
+                u->RemoveAurasDueToSpell(id);
+            u->RemoveAurasDueToSpell(STATUS_MARKER);
+        }
+        for (auto itr = sGround.begin(); itr != sGround.end();)
+        {
+            if (std::get<0>(itr->first) != e.id)
+            {
+                ++itr;
+                continue;
+            }
+            if (anyone)
+                if (DynamicObject* d = ObjectAccessor::GetDynamicObject(*anyone, itr->second))
+                    d->Remove();
+            itr = sGround.erase(itr);
+        }
+    }
+
+    // hovering an area spell on the action bar: an arrow over whoever it would catch, from where you stand now
+    static std::unordered_map<ObjectGuid, std::vector<ObjectGuid>> sMarked;
+    void ForgetAoePreview(ObjectGuid g) { sMarked.erase(g); }
+
+    void AoePreview(Player* p, std::string const& spellName)
+    {
+        auto& marks = sMarked[p->GetGUID()];
+        for (ObjectGuid g : marks)
+            if (Unit* u = ObjectAccessor::GetUnit(*p, g))
+                u->RemoveAurasDueToSpell(STATUS_MARKER);
+        marks.clear();
+        Encounter* e = EncounterOf(p->GetGUID());
+        if (!e || spellName.empty())
+            return;
+        SpellInfo const* si = nullptr;
+        for (uint32 id : AllActionIds())
+            if (SpellInfo const* s = sSpellMgr->GetSpellInfo(id); s && s->SpellName[0] && spellName == s->SpellName[0] && p->HasSpell(id))
+                si = s;
+        if (!si)
+            return;
+        float radius = 0.f, cone = 0.f;
+        if (si->Id == SPELL_THUNDERWAVE || si->Id == SPELL_SPIRIT_GUARDIANS)
+            radius = 4.5f;                        // (all round you: the rules' own reach, DndSpells.cpp)
+        else
+            for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
+                if (si->Effects[i].TargetA.GetSelectionCategory() == TARGET_SELECT_CATEGORY_CONE)
+                {
+                    radius = si->Effects[i].CalcRadius(p);
+                    cone = float(M_PI) / 3.f;    // WoW's cones: 60 degrees ahead of you (Spell::SelectImplicitConeTargets)
+                }
+        if (radius <= 0.f)
+            return;
+        for (Combatant const& o : e->order)
+        {
+            if (o.player || o.gone || !o.alive)
+                continue;
+            Unit* u = e->GetUnit(o);
+            if (!u || !u->IsAlive() || p->GetExactDist(u) > radius + u->GetCombatReach() || (cone > 0.f && !p->HasInArc(cone, u)))
+                continue;
+            u->AddAura(STATUS_MARKER, u);
+            marks.push_back(u->GetGUID());
+        }
+    }
+
     // a combatant's conditions, for the turn order's portraits ("Held,Asleep,...")
     static std::string Conditions(Combatant const& c)
     {
@@ -287,6 +469,7 @@ namespace Dnd
             Send(p, Acore::StringFormat("OE^{}^{}^{}", e.round, e.cur, e.name.substr(0, 60)));
         }
         e.lastOrderPush = Now();
+        SyncVisuals(e);                          // (whatever changed the order changed what's on whom)
     }
 
     // P^x,y,reach^x,y,reach^...   in turn-order index order; the addon draws them relative to the player
@@ -818,6 +1001,7 @@ namespace Dnd
     // ------------------------------------------------------------------ end
     static void Cleanup(Encounter& e)
     {
+        ClearVisuals(e);
         for (auto itr = sFled.begin(); itr != sFled.end();)
             itr = itr->second == e.id ? sFled.erase(itr) : std::next(itr);
         for (Combatant& c : e.order)
@@ -2622,6 +2806,8 @@ namespace Dnd
             ++itr;
 
             e.areas.erase(std::remove_if(e.areas.begin(), e.areas.end(), [now](Area const& a) { return a.expiresMs <= now; }), e.areas.end());
+            if (Now() - e.lastVisualSync > 500)
+                SyncVisuals(e);
             // KeepProneDown: the core stands units up when they're hit or engage; a prone combatant stays on the ground
             for (Combatant const& pc : e.order)
                 if (pc.prone && pc.alive && !pc.gone)

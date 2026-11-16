@@ -581,6 +581,7 @@ namespace Dnd
         uint32 lastEconomyPush = 0;
         uint32 lastOrderPush = 0;
         uint32 lastPositionPush = 0;
+        uint32 lastVisualSync = 0;           // SyncVisuals: the status auras and the ground areas, last brought up to date
         std::vector<Area> areas;
         ObjectGuid aiTarget;
         bool aiRanged = false;
@@ -885,7 +886,22 @@ namespace Dnd
     void ClearTestStats();
     bool AddCreatureToFight(Creature* c, Unit* inFightWith);
     void AbandonFight(Player* p);
-    void GoFirst(Player* p);                     // DndCombat.cpp: before the first turn, this player goes first (the jig)                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
+    void GoFirst(Player* p);
+    // what you can see (tools/make_patch.py STATUS_AURAS / GROUND_VISUALS): each combatant's conditions and lasting effects as
+    // auras (the stock spell's look, a buff or debuff with our name and tooltip), each lasting area as a patch on the ground
+    enum Visual : uint32
+    {
+        STATUS_ASLEEP = 201501, STATUS_HELD, STATUS_RESTRAINED, STATUS_ENTRANCED, STATUS_FRIGHTENED, STATUS_TURNED, STATUS_POISONED,
+        STATUS_BURNING, STATUS_OUTLINED, STATUS_BLESSED, STATUS_SHIELD_OF_FAITH, STATUS_BARKSKIN, STATUS_BLUR,
+        STATUS_SPIRIT_GUARDIANS, STATUS_CONCENTRATING, STATUS_HEROISM, STATUS_STUNNED, STATUS_LAST = STATUS_STUNNED,
+        STATUS_MARKER = 201550,              // the hover preview's arrow over whoever an area spell would catch
+        GROUND_CLOUD_OF_DAGGERS = 201601, GROUND_MOONBEAM, GROUND_STINKING_CLOUD, GROUND_HUNGER_OF_HADAR, GROUND_SLEET_STORM,
+        ELIXIR_AURA_BASE = 201660,           // + the elixir's place among the elixirs' stock spells, in order
+        ELIXIR_AURA_LAST = 201679,
+    };
+    void SyncVisuals(Encounter& e);
+    void AoePreview(Player* p, std::string const& spellName);   // hovering an area spell: who it would catch ("" clears)
+    void ForgetAoePreview(ObjectGuid g);                     // DndCombat.cpp: before the first turn, this player goes first (the jig)                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)
     // the spell jig (DndJig.cpp, `.dnd jig`): every spell, class action and consumable, tested by hand on the Shimmering Flats
     bool InJig(Player* p);
     bool IsJigDummy(ObjectGuid g);

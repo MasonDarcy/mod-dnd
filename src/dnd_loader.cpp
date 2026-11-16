@@ -62,6 +62,8 @@ namespace Dnd
             TavernMessage(p, msg.substr(4));
         else if (msg.rfind("jig^", 0) == 0)
             JigMessage(p, msg.substr(4));
+        else if (msg.rfind("aoe^", 0) == 0)
+            AoePreview(p, msg.substr(4));
         else if (msg.rfind("say^", 0) == 0)
             DialogueChoose(p, uint32(std::atoi(msg.c_str() + 4)));
         else if (msg.rfind("hover^", 0) == 0)
@@ -133,6 +135,8 @@ public:
     void OnPlayerLogout(Player* p) override
     {
         ForgetJig(p);                            // (the spell jig's borrowed build goes back before anything is saved)
+        AoePreview(p, "");
+        ForgetAoePreview(p->GetGUID());
         ForgetDowned(p->GetGUID());
         CloseDialogue(p, false);
         OnPlayerLeft(p);
