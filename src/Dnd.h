@@ -444,6 +444,11 @@ namespace Dnd
     bool TreatTellHiddenFor(Player const* p, GameObject const* go);    // claimed: the tell's gone, for them only
     void UpdateFood(Player* p, uint32 diff);                          // DndSpells.cpp: food's slow heal
     void TreatGameResult(Player* p, std::string const& args);      // the addon's minigame answer
+    // a trial (a press-your-luck find): treattrial^id^nonce^roll|stop - roll the next rung or stop and take its reward
+    void TreatTrialAction(Player* p, std::string const& args);
+    void SetTestTrial(uint32 id, std::string const& trial, std::string const& rewards, std::string const& texts);
+    // what a trial's top rung can give for good: +1 to an ability ("boon:WIS"), a resistance ("boon:resist:Poison")
+    bool BoonResists(Player* p, DmgType type);
     // tavern games (DndTavern.cpp): dice, cards and drinking contests with villagers, for a wager
     void OpenTavern(Player* p, Creature* npc, std::string const& games);
     void MakeHome(Player* p, Creature* npc);    // an innkeeper's bind: the hearthstone comes back to this inn
@@ -499,6 +504,9 @@ namespace Dnd
     int SaveBonus(Unit* u, Ability a);
     bool SaveAdvantage(Unit* u, Ability a, bool magic, bool poison = false);
     float MeleeRange(Unit const* a, Unit const* b);
+    // how far past an area's edge a creature can stand and still be caught: its body (bounding radius), so the ring on
+    // the ground is the truth - a creature whose feet overlap it is in
+    float AreaEdge(Unit const* u);
     std::string Name(Unit* u);
 
     // ---------------------------------------------------------------- damage
@@ -1012,6 +1020,7 @@ namespace Dnd
         ELIXIR_AURA_LAST = 201679,
     };
     void SyncVisuals(Encounter& e);
+    std::vector<ObjectGuid> BossUnitsOf(ObjectGuid player);   // the creatures engaged as this player's "boss" units
     // the story (DndStory.cpp, tools/story.py): one shared world - flags, standing, the lean - read and changed by
     // conversations and encounters' endings, shown in the Journal
     void LoadStory();

@@ -12,6 +12,7 @@
  * the dice log goes to logs/dnd_selftest_dice.log instead of dnd.log.
  */
 #include "Dnd.h"
+#include "DBCStores.h"
 #include "PathGenerator.h"
 #include "GameEventMgr.h"
 
@@ -2686,18 +2687,18 @@ namespace
         add("treat.payoff_game_after_a_passed_check", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(991, Bot(c), "geode", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1091, Bot(c), "geode", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 991); });
-            Expect(s, "the check passed: the geode game opens", [lastGame](Ctx&) { return lastGame().rfind("TG^991^geode^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1091); });
+            Expect(s, "the check passed: the geode game opens", [lastGame](Ctx&) { return lastGame().rfind("TG^1091^geode^0^", 0) == 0; });
             Expect(s, "nothing paid out yet", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
             Act(s, answer(1));
             ExpectEq(s, "cracked open: the reward", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 5000);
             ExpectSaw(s, "+3 XP");                   // a DC 12 find: 3 XP
             ExpectSaw(s, "LF^");                     // what it taught you goes to the log's Finds tab
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 991); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1091); });
             ExpectSaw(s, "already searched");
-            Act(s, [](Ctx&) { RemoveTestTreat(991); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1091); });
         });
         // one find for everyone: whoever claims a treat takes it from the world (for every other character, for good), and
         // takes a share of the goods for each player within 30 m to hand out
@@ -2708,27 +2709,27 @@ namespace
             {
                 Player* a = Bot(c);
                 Player* b = AddBotAt(c, FIGHTER, 1, a->GetPositionX() + 40.f, a->GetPositionY());   // 40 m off: not in on it
-                AddTestTreat(985, a, "", 5, 1000);
+                AddTestTreat(1085, a, "", 5, 1000);
                 c.v["amoney"] = float(a->GetMoney());
                 c.v["bmoney"] = float(b->GetMoney());
                 sDice.assign({ 15, 15 });
-                UseTestTreat(a, 985);
+                UseTestTreat(a, 1085);
                 sDice.clear();
                 CheckEq(c, double(a->GetMoney()) - c.v["amoney"], 1000, "the finder alone: one share");
                 MoveBotTo(b, a->GetPositionX() + 2.f, a->GetPositionY());
                 ClearMsgs();
                 sDice.assign({ 15, 15 });
-                UseTestTreat(b, 985);
+                UseTestTreat(b, 1085);
                 sDice.clear();
                 Check(c, SawBy(b, "Someone got here first - Jigwiz"), "the next one finds it gone, and who took it");
                 CheckEq(c, double(b->GetMoney()) - c.v["bmoney"], 0, "and gets nothing");
                 Check(c, MsgsBy(b, "TD^").empty(), "without even a roll");
                 ResetTreats(a);                                   // (.dnd restart: the character gives back what it took)
                 sDice.assign({ 15, 15 });
-                UseTestTreat(b, 985);
+                UseTestTreat(b, 1085);
                 sDice.clear();
                 CheckEq(c, double(b->GetMoney()) - c.v["bmoney"], 2000, "given back: the fighter finds it (with the wizard by: two shares)");
-                RemoveTestTreat(985);
+                RemoveTestTreat(1085);
             });
         });
         add("treat.the_finder_gets_a_share_for_each_player_nearby", [=](Script& s)
@@ -2739,18 +2740,18 @@ namespace
                 Player* a = Bot(c);
                 AddBotAt(c, FIGHTER, 1, a->GetPositionX() + 3.f, a->GetPositionY());
                 AddBotAt(c, ROGUE, 1, a->GetPositionX(), a->GetPositionY() + 3.f);
-                AddTestTreat(986, a, "", 5, 500);
-                SetTestTreat(986, "", "", "", 118);               // and a potion
+                AddTestTreat(1086, a, "", 5, 500);
+                SetTestTreat(1086, "", "", "", 118);               // and a potion
                 c.v["money"] = float(a->GetMoney());
                 uint32 before = a->GetItemCount(118);
                 sDice.assign({ 15, 15 });
                 ClearMsgs();
-                UseTestTreat(a, 986);
+                UseTestTreat(a, 1086);
                 sDice.clear();
                 CheckEq(c, double(a->GetMoney()) - c.v["money"], 1500, "three players: 500 x 3");
                 CheckEq(c, double(a->GetItemCount(118) - before), 3, "and three potions");
                 Check(c, SawBy(a, "A share for each of the 3 of you"), "to hand out");
-                RemoveTestTreat(986);
+                RemoveTestTreat(1086);
             });
         });
         // [Update] lines in everyone's chat (about bots, the jig keeps them instead of sending them)
@@ -2760,16 +2761,16 @@ namespace
             Act(s, [](Ctx& c)
             {
                 sAnnounced.clear();
-                AddTestTreat(987, Bot(c), "", 5, 1000);
-                SetTestTreat(987, "", "", "", 118);
+                AddTestTreat(1087, Bot(c), "", 5, 1000);
+                SetTestTreat(1087, "", "", "", 118);
                 sDice.assign({ 15, 15 });
-                UseTestTreat(Bot(c), 987);
+                UseTestTreat(Bot(c), 1087);
                 sDice.clear();
                 std::string want = "Jigwiz searched something hidden in ";
                 Check(c, WasAnnounced(want), "announced: " + want + "...");
                 ItemTemplate const* it = sObjectMgr->GetItemTemplate(118);
                 Check(c, it && WasAnnounced("came away with " + it->Name1 + " and 10s."), "with what it held");
-                RemoveTestTreat(987);
+                RemoveTestTreat(1087);
             });
         });
         add("announce.deaths_victories_and_levels", [=](Script& s)
@@ -2816,27 +2817,27 @@ namespace
         add("treat.failed_check_opens_no_payoff_game", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(992, Bot(c), "ice", 12, 5000); });
+            Act(s, [](Ctx& c) { AddTestTreat(1092, Bot(c), "ice", 12, 5000); });
             Rig(s, { 1, 1 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 992); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1092); });
             Expect(s, "no game", [lastGame](Ctx&) { return lastGame().empty(); });
             ExpectSaw(s, "TE^fail");
-            Act(s, [](Ctx&) { RemoveTestTreat(992); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1092); });
         });
         add("treat.puzzle_needs_a_passed_check", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(993, Bot(c), "runes", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1093, Bot(c), "runes", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 1, 1 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 993); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1093); });
             Expect(s, "a failed roll: no puzzle at all", [lastGame](Ctx&) { return lastGame().empty(); });
             ExpectSaw(s, "TE^fail");
             Expect(s, "and nothing paid", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 993); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1093); });
             ExpectSaw(s, "already searched");
             Expect(s, "no second chance", [lastGame](Ctx&) { return lastGame().empty(); });
-            Act(s, [](Ctx&) { RemoveTestTreat(993); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1093); });
         });
         add("treat.players_nearby_hear_of_a_minigame", [=](Script& s)
         {
@@ -2845,77 +2846,77 @@ namespace
             AddBot(s, wiz1);
             Act(s, [](Ctx& c)
             {
-                AddTestTreat(996, Bot(c), "lock", 12, 5000);
+                AddTestTreat(1096, Bot(c), "lock", 12, 5000);
                 AddBotAt(c, FIGHTER, 1, Bot(c)->GetPositionX() + 2.f, Bot(c)->GetPositionY());
                 AddBotAt(c, ROGUE, 1, Bot(c)->GetPositionX() - 60.f, Bot(c)->GetPositionY());
             });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { ClearMsgs(); UseTestTreat(Bot(c), 996); });
+            Act(s, [](Ctx& c) { ClearMsgs(); UseTestTreat(Bot(c), 1096); });
             Expect(s, "the fighter hears the wizard set to work", [](Ctx& c) { return SawBy(Bot(c, 1), "Jigwiz sets to work on"); });
             Expect(s, "the rogue far off doesn't", [](Ctx& c) { return !SawBy(Bot(c, 2), "sets to work"); });
             Expect(s, "nor does the wizard (they're playing it)", [](Ctx& c) { return !SawBy(Bot(c), "sets to work"); });
             Act(s, answer(1));
             Expect(s, "and hears it gave up its secret", [](Ctx& c) { return SawBy(Bot(c, 1), "...and Jigwiz has it"); });
-            Act(s, [](Ctx&) { RemoveTestTreat(996); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1096); });
         });
         add("treat.puzzle_out_of_tries_pays_nothing_and_keeps_its_difficulty", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(997, Bot(c), "lock", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1097, Bot(c), "lock", 12, 5000); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 997); });
-            Expect(s, "a passed roll: the lock opens to pick", [lastGame](Ctx&) { return lastGame().rfind("TG^997^lock^0^", 0) == 0; });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 997); });
-            Expect(s, "closed and reopened: no new roll", [lastGame](Ctx&) { return lastGame().rfind("TG^997^lock^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1097); });
+            Expect(s, "a passed roll: the lock opens to pick", [lastGame](Ctx&) { return lastGame().rfind("TG^1097^lock^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1097); });
+            Expect(s, "closed and reopened: no new roll", [lastGame](Ctx&) { return lastGame().rfind("TG^1097^lock^0^", 0) == 0; });
             ExpectNotSaw(s, "TD^");
             Act(s, answer(0));
             ExpectSaw(s, "TE^fail");
             Expect(s, "out of picks pays nothing", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
-            Act(s, [](Ctx&) { RemoveTestTreat(997); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1097); });
         });
         // the second set of games (DnDGames2.lua): the server only knows payoffs (can't be lost) from puzzles
         add("treat.new_games_a_puzzle_can_be_lost_a_payoff_cannot", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(975, Bot(c), "wards", 15, 500); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1075, Bot(c), "wards", 15, 500); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 975); });
-            Expect(s, "the seal opens, hard (DC 15)", [lastGame](Ctx&) { return lastGame().rfind("TG^975^wards^1^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1075); });
+            Expect(s, "the seal opens, hard (DC 15)", [lastGame](Ctx&) { return lastGame().rfind("TG^1075^wards^1^", 0) == 0; });
             Act(s, answer(0));
             ExpectSaw(s, "TE^fail");
             Expect(s, "out of touches: nothing paid", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
-            Act(s, [](Ctx&) { RemoveTestTreat(975); });
-            Act(s, [](Ctx& c) { AddTestTreat(974, Bot(c), "pry", 12, 500); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1075); });
+            Act(s, [](Ctx& c) { AddTestTreat(1074, Bot(c), "pry", 12, 500); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 974); });
-            Expect(s, "the crate opens to pry, easy", [lastGame](Ctx&) { return lastGame().rfind("TG^974^pry^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1074); });
+            Expect(s, "the crate opens to pry, easy", [lastGame](Ctx&) { return lastGame().rfind("TG^1074^pry^0^", 0) == 0; });
             Act(s, answer(0));                                // (the addon never sends it for a payoff)
             ExpectNotSaw(s, "TE^fail");
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 974); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1074); });
             ExpectNotSaw(s, "already searched");
             Act(s, answer(1));
             Expect(s, "levered open: paid", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"] + 500; });
-            Act(s, [](Ctx&) { RemoveTestTreat(974); });
-            Act(s, [](Ctx& c) { AddTestTreat(973, Bot(c), "mosaic", 15, 500); });      // (the third set: a payoff too)
+            Act(s, [](Ctx&) { RemoveTestTreat(1074); });
+            Act(s, [](Ctx& c) { AddTestTreat(1073, Bot(c), "mosaic", 15, 500); });      // (the third set: a payoff too)
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 973); });
-            Expect(s, "a payoff is never hard, whatever its DC", [lastGame](Ctx&) { return lastGame().rfind("TG^973^mosaic^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1073); });
+            Expect(s, "a payoff is never hard, whatever its DC", [lastGame](Ctx&) { return lastGame().rfind("TG^1073^mosaic^0^", 0) == 0; });
             Act(s, answer(0));
             ExpectNotSaw(s, "TE^fail");
-            Act(s, [](Ctx& c) { AddTestTreat(972, Bot(c), "crates", 15, 500); });      // and a puzzle from it
+            Act(s, [](Ctx& c) { AddTestTreat(1072, Bot(c), "crates", 15, 500); });      // and a puzzle from it
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 972); });
-            Expect(s, "the crates, hard", [lastGame](Ctx&) { return lastGame().rfind("TG^972^crates^1^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1072); });
+            Expect(s, "the crates, hard", [lastGame](Ctx&) { return lastGame().rfind("TG^1072^crates^1^", 0) == 0; });
             Act(s, answer(0));
             ExpectSaw(s, "TE^fail");
-            Act(s, [](Ctx&) { RemoveTestTreat(973); RemoveTestTreat(972); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1073); RemoveTestTreat(1072); });
         });
         add("treat.passive_miss_is_shown_quietly", [=](Script& s)
         {
             AddBot(s, wiz1);
             Rig(s, { 1, 1 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); AddTestTreat(998, Bot(c), "", 12, 300, true); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); AddTestTreat(1098, Bot(c), "", 12, 300, true); });
             s.Until([](Ctx&) { return Saw("TR^"); }, "the passive roll", 3000);
             ExpectSaw(s, "nothing catches your eye");
             Expect(s, "the TR says it failed", [](Ctx&)
@@ -2925,13 +2926,13 @@ namespace
                         return m.size() > 2 && m.substr(m.size() - 2) == "^0";
                 return false;
             });
-            Act(s, [](Ctx&) { RemoveTestTreat(998); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1098); });
         });
         add("treat.passive_find", [=](Script& s)
         {
             AddBot(s, wiz1);
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); AddTestTreat(999, Bot(c), "", 12, 300, true); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); AddTestTreat(1099, Bot(c), "", 12, 300, true); });
             s.Until([](Ctx&) { return Saw("TR^"); }, "the passive roll", 3000);
             ExpectSaw(s, "you notice something");
             Expect(s, "the TR says it passed", [](Ctx&)
@@ -2941,51 +2942,146 @@ namespace
                         return m.substr(m.size() - 2) == "^1";
                 return false;
             });
-            Act(s, [](Ctx&) { RemoveTestTreat(999); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1099); });
         });
         add("treat.a_find_can_teach_a_skill", [=](Script& s)
         {
             AddBot(s, wiz1);
             ExpectEq(s, "Survival before: WIS 1", [](Ctx& c) { return SkillBonusByName(Bot(c), "Survival"); }, 1);
-            Act(s, [](Ctx& c) { AddTestTreat(980, Bot(c), "", 12, 0); SetTestTreat(980, "", "", "Survival", 0); });
+            Act(s, [](Ctx& c) { AddTestTreat(1080, Bot(c), "", 12, 0); SetTestTreat(1080, "", "", "Survival", 0); });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 980); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1080); });
             ExpectSaw(s, "Proficiency: Survival");
             ExpectEq(s, "Survival after: WIS 1 + proficiency 2", [](Ctx& c) { return SkillBonusByName(Bot(c), "Survival"); }, 3);
             Act(s, [](Ctx& c) { HandleClientMessage(Bot(c), "build^8,14,13,15,12,10^3^2^Sage^Insight,Medicine"); });
             ExpectEq(s, "and it survives a rebuild", [](Ctx& c) { return SkillBonusByName(Bot(c), "Survival"); }, 3);
-            Act(s, [](Ctx&) { RemoveTestTreat(980); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1080); });
+        });
+        // trials: press your luck - a rung's reward if you stop, nothing if a roll fails, and a boon for good at the top
+        auto lastTrial = []
+        {
+            std::string g;
+            for (std::string const& m : sMsgs)
+                if (m.rfind("TT^", 0) == 0)
+                    g = m;
+            return Split(g, '^');               // TT, id, nonce, title, check, rung, dcs, rewards, text
+        };
+        auto trial = [lastTrial](std::string const& what)
+        {
+            return [lastTrial, what](Ctx& c)
+            {
+                std::vector<std::string> f = lastTrial();
+                if (f.size() < 6)
+                {
+                    std::string seen;
+                    for (std::string const& m : sMsgs)
+                        seen += " [" + m.substr(0, 40) + "]";
+                    throw std::runtime_error("no trial was opened; saw:" + seen.substr(0, 600));
+                }
+                TreatTrialAction(Bot(c), f[1] + "^" + f[2] + "^" + what);
+            };
+        };
+        add("treat.trial_stop_takes_that_rungs_reward", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                AddTestTreat(1001, Bot(c), "", 10, 0);
+                SetTestTrial(1001, "Wisdom save:12,14,16", "gold:1000|gold:3000|gold:9000", "One page.|Two pages.|The whole book.");
+                c.v["money"] = float(Bot(c)->GetMoney());
+            });
+            Rig(s, {}, 15);                         // every die a 15 (a stray roll in the world can't take one): the way in
+                                                    // (Perception 15 vs DC 10), then rung 1 (15 + WIS save vs 12)
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1001); });
+            Expect(s, "through the way in: the ladder, nothing passed yet", [lastTrial](Ctx&)
+            {
+                std::vector<std::string> f = lastTrial();
+                return f.size() >= 8 && f[1] == "1001" && f[4] == "Wisdom save" && f[5] == "0" && f[6] == "12,14,16";
+            });
+            Act(s, trial("roll"));
+            Expect(s, "rung 1 passed", [lastTrial](Ctx&) { std::vector<std::string> f = lastTrial(); return f.size() >= 6 && f[5] == "1"; });
+            Act(s, trial("stop"));
+            Rig(s, {}, 0);
+            ExpectEq(s, "stopped after rung 1: its reward, 10 silver", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 1000);
+            ExpectSaw(s, "TTX");
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1001); });
+            ExpectSaw(s, "already searched");       // (taken: one go at it)
+            Act(s, [](Ctx&) { RemoveTestTreat(1001); });
+        });
+        add("treat.trial_a_failed_roll_loses_it_all", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                AddTestTreat(1002, Bot(c), "", 10, 0);
+                SetTestTrial(1002, "Wisdom save:10,20", "gold:1000|gold:5000", "A sip.|The lot.");
+                c.v["money"] = float(Bot(c)->GetMoney());
+            });
+            Rig(s, {}, 15);                         // in, and rung 1 (15 vs 10)
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1002); });
+            Act(s, trial("roll"));
+            Rig(s, {}, 2);                          // rung 2: a 2 can't make DC 20
+            Act(s, trial("roll"));
+            Rig(s, {}, 0);
+            ExpectEq(s, "pressed on and failed: nothing, not even rung 1's", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 0);
+            ExpectSaw(s, "TTX");
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1002); });
+            ExpectSaw(s, "already searched");       // (missed: no second go)
+            Act(s, [](Ctx&) { RemoveTestTreat(1002); });
+        });
+        add("treat.trial_the_top_rung_gives_a_boon_for_good", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                AddTestTreat(1003, Bot(c), "", 10, 0);
+                SetTestTrial(1003, "Constitution save:10,10", "gold:100|abil:WIS,resist:Poison", "It burns.|It settles.");
+                c.v["wis"] = float(GetSheet(Bot(c)).abil[WIS]);
+            });
+            Expect(s, "no poison resistance before", [](Ctx& c) { return !BoonResists(Bot(c), DMG_POISON); });
+            Rig(s, {}, 15);                         // in, and both rungs: the top pays out by itself
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1003); });
+            Act(s, trial("roll"));
+            Act(s, trial("roll"));
+            Rig(s, {}, 0);
+            ExpectEq(s, "+1 Wisdom, for good", [](Ctx& c) { return float(GetSheet(Bot(c)).abil[WIS]) - c.v["wis"]; }, 1);
+            Expect(s, "resistant to poison, for good", [](Ctx& c) { return BoonResists(Bot(c), DMG_POISON); });
+            ExpectSaw(s, "TTX");
+            Act(s, [](Ctx& c) { ClearLevelChoices(Bot(c)); });
+            ExpectEq(s, "a restart takes the +1 back (the finds come back too)",
+                [](Ctx& c) { return float(GetSheet(Bot(c)).abil[WIS]) - c.v["wis"]; }, 0);
+            Act(s, [](Ctx&) { RemoveTestTreat(1003); });
         });
         add("treat.song_is_hard_until_you_learn_the_air", [=](Script& s)
         {
             AddBot(s, wiz1);
             Act(s, [](Ctx& c)
             {
-                AddTestTreat(981, Bot(c), "", 12, 0);
-                SetTestTreat(981, "test_air", "", "", 0);
-                AddTestTreat(982, Bot(c), "song", 12, 500);
-                SetTestTreat(982, "", "test_air", "", 0);
-                AddTestTreat(983, Bot(c), "song", 12, 500);
-                SetTestTreat(983, "", "test_air", "", 0);
+                AddTestTreat(1081, Bot(c), "", 12, 0);
+                SetTestTreat(1081, "test_air", "", "", 0);
+                AddTestTreat(1082, Bot(c), "song", 12, 500);
+                SetTestTreat(1082, "", "test_air", "", 0);
+                AddTestTreat(1083, Bot(c), "song", 12, 500);
+                SetTestTreat(1083, "", "test_air", "", 0);
             });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 982); });
-            Expect(s, "never heard the air: the hard puzzle", [lastGame](Ctx&) { return lastGame().rfind("TG^982^song^1^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1082); });
+            Expect(s, "never heard the air: the hard puzzle", [lastGame](Ctx&) { return lastGame().rfind("TG^1082^song^1^", 0) == 0; });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { UseTestTreat(Bot(c), 981); });          // the treat that teaches it
+            Act(s, [](Ctx& c) { UseTestTreat(Bot(c), 1081); });          // the treat that teaches it
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 983); });
-            Expect(s, "having learned it: the stones play it first", [lastGame](Ctx&) { return lastGame().rfind("TG^983^song^0^", 0) == 0; });
-            Act(s, [](Ctx&) { RemoveTestTreat(981); RemoveTestTreat(982); RemoveTestTreat(983); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1083); });
+            Expect(s, "having learned it: the stones play it first", [lastGame](Ctx&) { return lastGame().rfind("TG^1083^song^0^", 0) == 0; });
+            Act(s, [](Ctx&) { RemoveTestTreat(1081); RemoveTestTreat(1082); RemoveTestTreat(1083); });
         });
         add("treat.harder_puzzles_for_higher_dcs", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(984, Bot(c), "lock", 15, 500); });
+            Act(s, [](Ctx& c) { AddTestTreat(1084, Bot(c), "lock", 15, 500); });
             Rig(s, { 20, 20 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 984); });
-            Expect(s, "a DC 15 lock is the hard lock", [lastGame](Ctx&) { return lastGame().rfind("TG^984^lock^1^", 0) == 0; });
-            Act(s, [](Ctx&) { RemoveTestTreat(984); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1084); });
+            Expect(s, "a DC 15 lock is the hard lock", [lastGame](Ctx&) { return lastGame().rfind("TG^1084^lock^1^", 0) == 0; });
+            Act(s, [](Ctx&) { RemoveTestTreat(1084); });
         });
         add("magic.plus_one_weapon", [=](Script& s)
         {
@@ -3334,21 +3430,21 @@ namespace
         add("treat.puzzle_easy_on_a_pass", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(994, Bot(c), "runes", 12, 700); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1094, Bot(c), "runes", 12, 700); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 994); });
-            Expect(s, "the easy runes", [lastGame](Ctx&) { return lastGame().rfind("TG^994^runes^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1094); });
+            Expect(s, "the easy runes", [lastGame](Ctx&) { return lastGame().rfind("TG^1094^runes^0^", 0) == 0; });
             Act(s, answer(1));
             ExpectEq(s, "solved: the reward", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 700);
-            Act(s, [](Ctx&) { RemoveTestTreat(994); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1094); });
         });
         add("treat.game_answer_is_checked", [=](Script& s)
         {
             AddBot(s, wiz1);
-            Act(s, [](Ctx& c) { AddTestTreat(995, Bot(c), "geode", 5, 900); c.v["money"] = float(Bot(c)->GetMoney()); });
+            Act(s, [](Ctx& c) { AddTestTreat(1095, Bot(c), "geode", 5, 900); c.v["money"] = float(Bot(c)->GetMoney()); });
             Rig(s, { 15, 15 });
-            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 995); });
-            Act(s, [lastGame](Ctx& c) { TreatGameResult(Bot(c), "995^12345^1"); });
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1095); });
+            Act(s, [lastGame](Ctx& c) { TreatGameResult(Bot(c), "1095^12345^1"); });
             Expect(s, "a wrong nonce pays nothing", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
             Act(s, [](Ctx& c)
             {
@@ -3358,11 +3454,11 @@ namespace
             });
             Act(s, answer(1));
             Expect(s, "40 m away pays nothing", [](Ctx& c) { return float(Bot(c)->GetMoney()) == c.v["money"]; });
-            Act(s, [](Ctx& c) { Player* p = Bot(c); p->Relocate(c.v["x"], p->GetPositionY(), p->GetPositionZ()); sMsgs.clear(); UseTestTreat(p, 995); });
-            Expect(s, "back again: the game reopens without a new roll", [lastGame](Ctx&) { return lastGame().rfind("TG^995^geode^0^", 0) == 0; });
+            Act(s, [](Ctx& c) { Player* p = Bot(c); p->Relocate(c.v["x"], p->GetPositionY(), p->GetPositionZ()); sMsgs.clear(); UseTestTreat(p, 1095); });
+            Expect(s, "back again: the game reopens without a new roll", [lastGame](Ctx&) { return lastGame().rfind("TG^1095^geode^0^", 0) == 0; });
             Act(s, answer(1));
             ExpectEq(s, "now it pays", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 900);
-            Act(s, [](Ctx&) { RemoveTestTreat(995); });
+            Act(s, [](Ctx&) { RemoveTestTreat(1095); });
         });
 
         // ============================================================ tavern games (DndTavern.cpp)
@@ -3576,7 +3672,7 @@ namespace
                     Saw("JS^");
             });
             s.Until([](Ctx& c) { return IsTurnOf(Bot(c)); }, "the jig's fight to open with the bot's turn", 6000);
-            Expect(s, "in a fight with three sparring partners, two of them small", [](Ctx& c)
+            Expect(s, "in a fight with two small sparring partners (an undead and a kobold)", [](Ctx& c)
             {
                 Encounter* e = EncounterOf(Bot(c)->GetGUID());
                 if (!e)
@@ -3589,7 +3685,7 @@ namespace
                         if (Unit* u = e->GetUnit(o); u && u->GetMaxHealth() < 100)
                             ++frail;
                     }
-                return dummies == 3 && frail == 2;
+                return dummies == 2 && frail == 2;
             });
             Act(s, [](Ctx& c) { GetSheet(Bot(c)).slotsUsed[2] = 2; GetSheet(Bot(c)).wildShapeUsed = 2; JigRefill(Bot(c)); });
             Expect(s, "a turn in the jig gives everything back", [](Ctx& c)
@@ -7773,6 +7869,58 @@ namespace
             s.Wait(1000);
             ExpectCastOk(s);
             ExpectEq(s, "healed to 5", [](Ctx& c) { return double(Bot(c)->GetHealth()); }, 5);
+        });
+
+        // ============================================================ the turn bar's portraits: unit ids to target by
+        add("portraits.creatures_get_boss_unit_ids", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });                         // two of one name...
+            AddMob(s, { 8.f, 2.f });
+            MobOpt other;
+            other.dx = 8.f;
+            other.dy = -2.f;
+            other.st = Stats(BEAST);                         // ...and one of its own
+            AddMob(s, other);
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                std::vector<ObjectGuid> b = BossUnitsOf(Bot(c)->GetGUID());
+                CheckEq(c, double(b.size()), 3, "three creatures: three boss units");
+                Check(c, b.size() == 3 && b[2] == Mob(c, 2)->GetGUID(), "the two that share a name first");
+                DamageCtx d;
+                d.attacker = Bot(c);
+                d.victim = Mob(c, 0);
+                d.amount = int(Mob(c, 0)->GetHealth());
+                d.type = DMG_FORCE;
+                ApplyDamage(d);
+            });
+            s.Wait(300);
+            Expect(s, "the fallen one lets go of its unit", [](Ctx& c)
+            {
+                std::vector<ObjectGuid> b = BossUnitsOf(Bot(c)->GetGUID());
+                return b.size() == 2 && std::find(b.begin(), b.end(), c.mobs[0]) == b.end();
+            });
+        });
+
+        add("portraits.a_range_ring_under_a_hovered_spell", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            AddMob(s, { 8.f, 0.f });
+            StartFight(s);
+            Act(s, [](Ctx& c)
+            {
+                AoePreview(Bot(c), "Thunderwave");
+                GameObject* go = Bot(c)->FindNearestGameObject(9100195, 3.f);
+                Check(c, go != nullptr, "hovering Thunderwave: a rune on the ground under the wizard");
+                GameObjectDisplayInfoEntry const* di = sGameObjectDisplayInfoStore.LookupEntry(7783);
+                float base = (di ? std::max(di->maxX - di->minX, di->maxY - di->minY) / 2.f : 9.4f) * 0.66f;   // (its visible circle)
+                Check(c, go && std::fabs(go->GetObjectScale() * base - 4.5f) < 0.2f, "scaled to its 4.5 m");
+                AoePreview(Bot(c), "Fire Bolt");
+                Check(c, !Bot(c)->FindNearestGameObject(9100195, 3.f), "a bolt aimed at someone: no ring");
+                AoePreview(Bot(c), "");
+                Check(c, !Bot(c)->FindNearestGameObject(9100195, 3.f), "the hover ends: the rune goes");
+            });
         });
 
         // ============================================================ the merchants' prize pieces (tools/premium.py)

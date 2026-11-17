@@ -1055,7 +1055,7 @@ namespace Dnd
             for (Combatant const& c : e->order)
                 if (!c.gone && c.alive && !c.player)
                     if (Unit* u = e->GetUnit(c))
-                        if (u->IsAlive() && u->GetExactDist(p) <= r + u->GetCombatReach())
+                        if (u->IsAlive() && u->GetExactDist(p) <= r + AreaEdge(u))
                             out.push_back(u);
         return out;
     }
@@ -1996,7 +1996,7 @@ namespace Dnd
         if (Encounter* e = EncounterOf(caster->GetGUID()))
             for (Combatant const& o : e->order)
                 if (o.player != mine && !o.gone && o.alive && !o.downed && o.banishedBy.IsEmpty())
-                    if (Unit* u = e->GetUnit(o); u && u->IsAlive() && u->GetExactDist2d(&at) <= r + u->GetCombatReach())
+                    if (Unit* u = e->GetUnit(o); u && u->IsAlive() && u->GetExactDist2d(&at) <= r + AreaEdge(u))
                         out.push_back(u);
         return out;
     }
@@ -3106,7 +3106,7 @@ namespace Dnd
         if (Encounter* e = EncounterOf(p->GetGUID()))
             for (Combatant const& o : e->order)
                 if (!o.player && !o.gone && o.alive)
-                    if (Unit* u = e->GetUnit(o); u && u->IsAlive() && u->GetExactDist2d(&at) <= r + u->GetCombatReach())
+                    if (Unit* u = e->GetUnit(o); u && u->IsAlive() && u->GetExactDist2d(&at) <= r + AreaEdge(u))
                         out.push_back(u);
         return out;
     }
@@ -3472,7 +3472,7 @@ namespace Dnd
                 if (Encounter* e = EncounterOf(p->GetGUID()))
                     for (Combatant const& o : e->order)
                         if (!o.player && !o.gone && o.alive)
-                            if (Unit* u = e->GetUnit(o); u && u->IsAlive() && p->GetExactDist(u) <= 4.5f + u->GetCombatReach())
+                            if (Unit* u = e->GetUnit(o); u && u->IsAlive() && p->GetExactDist(u) <= 4.5f + AreaEdge(u))
                                 caught.push_back(u);
                 Narrate(p, nullptr, Acore::StringFormat("{} Thunderwave: a crack of thunder - {} caught.", Who(p), caught.size()));
                 for (Unit* u : caught)
@@ -3866,9 +3866,8 @@ namespace Dnd
             {
                 bool radiance = spell->Id == SPELL_WORD_OF_RADIANCE;
                 std::vector<Unit*> caught;
-                for (Unit* u : FoesNear(p, 6.f))
-                    if (p->GetExactDist(u) <= MeleeRange(p, u))      // right beside you
-                        caught.push_back(u);
+                for (Unit* u : FoesNear(p, NOMINAL_MELEE_RANGE))  // right beside you (melee reach: the ring shows it)
+                    caught.push_back(u);
                 Narrate(p, nullptr, Acore::StringFormat("{} {}: {} - {} caught.", Who(p), radiance ? "Word of Radiance" : "Thunderclap",
                     radiance ? "searing light bursts from them" : "a deafening crack", caught.size()));
                 for (Unit* u : caught)
@@ -4472,7 +4471,7 @@ namespace Dnd
                         int n = 0;
                         for (std::size_t k = 0; k < foes.size(); ++k)
                         {
-                            if (foes[k]->GetExactDist2d(&at) > d->radius + foes[k]->GetCombatReach())
+                            if (foes[k]->GetExactDist2d(&at) > d->radius + AreaEdge(foes[k]))
                                 continue;
                             ++n;
                             if (d->id == SPELL_SLEEP)
@@ -4489,7 +4488,7 @@ namespace Dnd
                     float v = 0.f;
                     Unit* closest = nullptr;
                     for (std::size_t k = 0; k < foes.size(); ++k)
-                        if (cr->GetExactDist(foes[k]) <= d->radius + foes[k]->GetCombatReach())
+                        if (cr->GetExactDist(foes[k]) <= d->radius + AreaEdge(foes[k]))
                         {
                             v += worth(*foeC[k]);
                             if (!closest)
@@ -4513,8 +4512,8 @@ namespace Dnd
                             float dx = g->GetPositionX() - cr->GetPositionX(), dy = g->GetPositionY() - cr->GetPositionY();
                             float along = dx * std::cos(ang) + dy * std::sin(ang);
                             float off = std::fabs(-dx * std::sin(ang) + dy * std::cos(ang));
-                            bool in = d->shape == SHP_LINE ? (along >= 0.f && along <= d->range && off <= d->radius + g->GetCombatReach())
-                                : (cr->GetExactDist(g) <= d->radius + g->GetCombatReach() && along > 0.f && off <= along * 0.58f + g->GetCombatReach());
+                            bool in = d->shape == SHP_LINE ? (along >= 0.f && along <= d->range && off <= d->radius + AreaEdge(g))
+                                : (cr->GetExactDist(g) <= d->radius + AreaEdge(g) && along > 0.f && off <= along * 0.58f + AreaEdge(g));
                             if (in)
                                 v += worth(*foeC[k]);
                         }
@@ -4830,8 +4829,8 @@ namespace Dnd
                     float dx = g->GetPositionX() - cr->GetPositionX(), dy = g->GetPositionY() - cr->GetPositionY();
                     float along = dx * std::cos(ang) + dy * std::sin(ang);
                     float off = std::fabs(-dx * std::sin(ang) + dy * std::cos(ang));
-                    if (d->shape == SHP_LINE ? (along >= 0.f && off <= d->radius + g->GetCombatReach())
-                        : (along > 0.f && off <= along * 0.58f + g->GetCombatReach()))
+                    if (d->shape == SHP_LINE ? (along >= 0.f && off <= d->radius + AreaEdge(g))
+                        : (along > 0.f && off <= along * 0.58f + AreaEdge(g)))
                         caught.push_back(g);
                 }
                 break;

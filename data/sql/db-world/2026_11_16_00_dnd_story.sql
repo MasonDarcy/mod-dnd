@@ -332,7 +332,9 @@ INSERT INTO `dnd_story_world` (`guid`, `cond`) VALUES
 (9004003, 'story:moira_murdered'),
 (9004004, 'story:magni_hope,!story:magni_restored'),
 (9004005, 'story:lady_gone'),
-(9004006, 'story:magni_restored');
+(9004006, 'story:magni_restored'),
+(9004010, '!resolved:41'),
+(9004011, '!resolved:40');
 INSERT INTO `dnd_story_rumor` (`id`, `zone`, `cond`, `text`) VALUES
 (1, 2, 'story:copperveins_hunt', '"The Coppervein brothers came through asking after a smooth fellow who sells claims. Nobody liked the look on their faces."'),
 (2, 2, 'story:thalgrim_freed,!story:copperveins_hunt', '"Thalgrim Coppervein walked out of Gol\'Bolar on his own two feet, they say. Someone pulled him out of there."'),
@@ -391,6 +393,27 @@ INSERT INTO `dnd_story_rumor` (`id`, `zone`, `cond`, `text`) VALUES
 (55, 20, 'story:voljin_stays', '"The Darkspear drums are beating for the loa, not for war. Vol\'jin\'s keeping his people home."'),
 (56, 20, 'story:runthak_to_garrosh', '"Old Runthak stormed into the Valley of Honor and shouted at Hellscream for an hour. Best show in Orgrimmar."'),
 (57, 17, 'story:deathstalkers_know', '"The Deathstalkers went down to the Apothecarium in force last night. Nobody\'s saying what for."');
+DELETE FROM `creature_template` WHERE `entry` BETWEEN 9100160 AND 9100189;
+DELETE FROM `creature_template_model` WHERE `CreatureID` BETWEEN 9100160 AND 9100189;
+DELETE FROM `creature_template_addon` WHERE `entry` BETWEEN 9100160 AND 9100189;
+CREATE TEMPORARY TABLE `dnd_tmp_corpse` SELECT * FROM `creature_template` WHERE `entry` = 1169;
+UPDATE `dnd_tmp_corpse` SET `entry` = 9100160, `name` = 'Dead Smith', `subname` = NULL, `faction` = 35, `npcflag` = 0,
+  `unit_flags` = 33554434, `dynamicflags` = 32, `gossip_menu_id` = 0, `minlevel` = 1, `maxlevel` = 1, `AIName` = '',
+  `ScriptName` = '', `MovementType` = 0, `lootid` = 0, `mingold` = 0, `maxgold` = 0, `RegenHealth` = 0;
+INSERT INTO `creature_template` SELECT * FROM `dnd_tmp_corpse`;
+DROP TEMPORARY TABLE `dnd_tmp_corpse`;
+INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+  VALUES (9100160, 0, 3456, 1, 1, 0);
+INSERT INTO `creature_template_addon` (`entry`, `bytes1`) VALUES (9100160, 7);
+CREATE TEMPORARY TABLE `dnd_tmp_corpse` SELECT * FROM `creature_template` WHERE `entry` = 853;
+UPDATE `dnd_tmp_corpse` SET `entry` = 9100161, `name` = 'Murdered Collector', `subname` = NULL, `faction` = 35, `npcflag` = 0,
+  `unit_flags` = 33554434, `dynamicflags` = 32, `gossip_menu_id` = 0, `minlevel` = 1, `maxlevel` = 1, `AIName` = '',
+  `ScriptName` = '', `MovementType` = 0, `lootid` = 0, `mingold` = 0, `maxgold` = 0, `RegenHealth` = 0;
+INSERT INTO `creature_template` SELECT * FROM `dnd_tmp_corpse`;
+DROP TEMPORARY TABLE `dnd_tmp_corpse`;
+INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`, `DisplayScale`, `Probability`, `VerifiedBuild`)
+  VALUES (9100161, 0, 1598, 1, 1, 0);
+INSERT INTO `creature_template_addon` (`entry`, `bytes1`) VALUES (9100161, 7);
 DELETE FROM `creature` WHERE `guid` BETWEEN 9004001 AND 9004400;
 INSERT INTO `creature` (`guid`, `id`, `map`, `spawnMask`, `phaseMask`, `equipment_id`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`, `wander_distance`, `currentwaypoint`, `MovementType`) VALUES
 (9004001, 9100101, 0, 1, 1, 0, -4862.0, -1026.5, 505.8, 0.0, 300, 0, 0, 0),
@@ -398,4 +421,6 @@ INSERT INTO `creature` (`guid`, `id`, `map`, `spawnMask`, `phaseMask`, `equipmen
 (9004003, 9100103, 0, 1, 1, 0, -4865.7, -1022.7, 505.8, 0.0, 300, 0, 0, 0),
 (9004004, 9100104, 0, 1, 1, 0, -4869.5, -1022.7, 505.8, 0.0, 300, 0, 0, 0),
 (9004005, 9100105, 0, 1, 1, 0, -8441.4, 333.1, 122.7, 2.23, 300, 0, 0, 0),
-(9004006, 9100106, 0, 1, 1, 0, -4869.5, -1022.7, 505.8, 0.0, 300, 0, 0, 0);
+(9004006, 9100106, 0, 1, 1, 0, -4869.5, -1022.7, 505.8, 0.0, 300, 0, 0, 0),
+(9004010, 9100160, 0, 1, 1, 0, -5348.0, -2814.5, 349.0, 1.2, 300, 0, 0, 0),
+(9004011, 9100161, 0, 1, 1, 0, -5559.0, -4119.5, 372.1, 4.0, 300, 0, 0, 0);

@@ -936,6 +936,11 @@ namespace Dnd
         return false;
     }
 
+    float AreaEdge(Unit const* u)
+    {
+        return std::max(0.3f, u->GetFloatValue(UNIT_FIELD_BOUNDINGRADIUS));
+    }
+
     float MeleeRange(Unit const* a, Unit const* b)
     {
         return std::max(NOMINAL_MELEE_RANGE, a->GetCombatReach() + b->GetCombatReach() + 4.0f / 3.0f);
@@ -1047,10 +1052,10 @@ namespace Dnd
                     }
                 }
             // gear: resistance to a damage type (it doesn't stack with Rage's), and flat reduction of damage from enemies
-            if (amount > 0 && RacialResists(p, d.type) && note.find("resisted") == std::string::npos)
+            if (amount > 0 && (RacialResists(p, d.type) || BoonResists(p, d.type)) && note.find("resisted") == std::string::npos)
             {
                 amount /= 2;
-                note += " (resisted: their blood)";
+                note += RacialResists(p, d.type) ? " (resisted: their blood)" : " (resisted: a hard-won gift)";
             }
             if (amount > 0 && ItemResists(p, d.type) && note.find("resisted") == std::string::npos)
             {

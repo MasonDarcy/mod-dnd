@@ -39,9 +39,9 @@ namespace Dnd
         uint32 const JIG_MAP = 1;                               // Kalimdor: the Shimmering Flats, east of the Mirage Raceway
         float const JIG_X = -5980.f, JIG_Y = -3760.f, JIG_Z = -57.6f;
         uint32 const DUMMY_UNDEAD = 48, DUMMY_HUMANOID = 38;   // a Skeletal Warrior and a Defias Thug, by look and type
-        uint32 const DUMMY_KOBOLD = 6;                          // Kobold Vermin: two of them, with real hit points (Sleep's
-                                                                // pool, anything that cares how hurt the target is, a kill)
-        uint32 const DUMMY_HP = 4000, KOBOLD_HP[] = { 15, 30 };   // (as the fight shows them, after scaling for the party)
+        uint32 const DUMMY_KOBOLD = 6;                          // Kobold Vermin, with real hit points (Sleep's pool, anything
+                                                                // that cares how hurt the target is, a kill)
+        uint32 const DUMMY_HP = 30, KOBOLD_HP = 15;             // (as the fight shows them, after scaling for the party)
         uint32 const FRAIL_HP = 15;
         // a test kit, for everything that wants a weapon or a shield in hand: dagger, quarterstaff, handaxe, longsword,
         // greatsword, shortbow, light crossbow, shield (tools/shops.py)
@@ -257,7 +257,7 @@ namespace Dnd
                 j.given[item] += want - have;
         }
 
-        // two sparring partners a few metres ahead, and a fight with them
+        // two sparring partners a few metres ahead - the undead (Turn Undead, Holy Water) and a kobold - and a fight with them
         void Spar(Player* p, Jig& j)
         {
             if (InCombat(p))
@@ -265,11 +265,11 @@ namespace Dnd
             Despawn(j, p);
             float o = p->GetOrientation();
             int i = 0;
-            for (uint32 entry : { DUMMY_UNDEAD, DUMMY_KOBOLD, DUMMY_KOBOLD })
+            for (uint32 entry : { DUMMY_UNDEAD, DUMMY_KOBOLD })
             {
-                float side = i == 0 ? 0.f : (i == 1 ? -0.5f : 0.5f);
-                float dist = i == 0 ? 10.f : 7.f;
-                uint32 want = i == 0 ? DUMMY_HP : KOBOLD_HP[i - 1];
+                float side = i == 0 ? -0.35f : 0.35f;
+                float dist = 7.f;
+                uint32 want = i == 0 ? DUMMY_HP : KOBOLD_HP;
                 ++i;
                 float x = p->GetPositionX() + std::cos(o + side) * dist, y = p->GetPositionY() + std::sin(o + side) * dist;
                 float z = p->GetMap()->GetHeight(x, y, p->GetPositionZ() + 5.f);
@@ -278,14 +278,21 @@ namespace Dnd
                 Creature* c = p->SummonCreature(entry, x, y, z, o + float(M_PI), TEMPSUMMON_MANUAL_DESPAWN);
                 if (!c)
                     continue;
+                // the engine's own creature AI, as every encounter's creature has: the stock one (SmartAI, wandering)
+                // fought the engine's moves - the skeleton walked a little, turned back, and never reached anyone
+                c->AIM_Initialize(MakeCombatantAI(c));
+                c->SetReactState(REACT_PASSIVE);
+                c->GetMotionMaster()->Clear();
+                c->GetMotionMaster()->MoveIdle();
+                c->SetWanderDistance(0.f);
+                c->SetDefaultMovementType(IDLE_MOTION_TYPE);
                 sDummies.insert(c->GetGUID());
                 if (entry == DUMMY_KOBOLD)
                     sFrail.insert(c->GetGUID());
                 j.dummies.push_back(c->GetGUID());
                 c->SetFaction(14);
                 // the fight scales a group's hit points for the party: aim so that it shows `want`
-                c->SetMaxHealth(entry == DUMMY_KOBOLD ? std::max<uint32>(1, uint32(std::lround(want / PartyHpScale(TunedPartySize(), false))))
-                                                      : DUMMY_HP);
+                c->SetMaxHealth(std::max<uint32>(1, uint32(std::lround(want / PartyHpScale(TunedPartySize(), false)))));
                 c->SetFullHealth();
             }
             if (j.dummies.empty())

@@ -32,6 +32,10 @@ namespace Dnd
     static int32 const NEXT_PEACE = -2;
     static int32 const NEXT_AMBUSH = -3;     // a fight in which the enemies are Surprised (lose their first turn)
     static int32 const NEXT_SOUR = -4;       // resolved on a sour note: cleared for half XP
+    static int32 const NEXT_TURN_AWAY = -1000;   // (internal) a secured talk's failed check: they turn away, half XP
+    // the addon's d20 shows SUCCESS / FAILURE 2.6 s after the roll arrives (DICE in DnD.lua): a roll's outcome waits
+    // this long, so the next line - or the creatures running off - never comes before the verdict
+    static uint32 const ROLL_REVEAL_MS = 2800;
     static uint32 const TRADE_OPTION = 99;   // a villager who sells things: "(Browse their wares.)" opens the shop
     static uint32 const GAME_OPTION = 98;    // a villager with tavern games: the table opens (DndTavern.cpp)
     static uint32 const TAXI_OPTION = 97;
@@ -79,6 +83,8 @@ namespace Dnd
         bool secured = false;                // offered a no-roll way out to PEACE: later failures don't start fights
         bool wagering = false;               // a wager's hand is being played (the talk waits for WagerResult)
         int32 wagerWin = 0, wagerLose = 0;   // where the talk goes on a win / a loss (a push comes back here)
+        uint32 rollDue = 0;                  // a check was rolled: its outcome waits until the addon's d20 has shown the
+        int32 rollNext = 0;                  // verdict (getMSTime), then the talk goes to rollNext (ResolveRoll)
         uint32 townSpawn = 0;                // a villager's chat (no encounter): PEACE pays their gift, SOUR closes it
         int townRole = -1;
         std::set<ObjectGuid> offered;        // a villager's chat: who nearby has been offered "Listen in" (DL / DLX)
@@ -592,6 +598,7 @@ namespace Dnd
 
     static void ShowNode(Player* p, Talk& t);
     static void Proceed(Player* p, Talk t, Creature* speaker, EncounterDef const* def, bool town, int32 next);
+    static void ResolveRoll(Player* p);
     static void SendNode(Player* to, Player* p, Talk& t, DialogueNode const& n, Creature* speaker, std::string const& voiceName,
         std::string const& text);
     static void Peace(Player* p, Creature* speaker, EncounterDef const& def, bool halfXp = false);
@@ -890,7 +897,10 @@ namespace Dnd
                 party.push_back(other);
         });
         for (Player* pl : party)
+        {
+            Send(pl, "RZ^" + p->GetName());  // who settled it: everyone there hears their instrument (DnDInstruments.lua)
             Send(pl, "V^RESOLVED");          // the banner for those there; the win counts for everyone online
+        }
         ShareEncounterWon(party, def, true, halfXp);
     }
 
@@ -992,6 +1002,15 @@ namespace Dnd
             Unwatch(p, leave);               // an onlooker closed the panel (Escape): it stays shut until this talk ends
             return;
         }
+        if (itr->second.rollDue)
+        {
+            // cut short while a roll's verdict is on its way (Escape, walking off): the roll still counts - a failed
+            // check can't be dodged by leaving - so it plays out now, and the talk closes after if it's still open
+            ResolveRoll(p);
+            itr = sTalks.find(p->GetGUID());
+            if (itr == sTalks.end())
+                return;
+        }
         SettleTownTalk(p, itr->second);      // (however it closes: Escape, walking off, logging out; TownResult pays once)
         WithdrawListen(p, itr->second);
         for (Player* w : Watchers(p))
@@ -1067,8 +1086,8 @@ namespace Dnd
             p->GetSession()->SendListInventory(speaker->GetGUID());
             return;
         }
-        if (t.wagering)
-            return;                              // (the wager's hand first)
+        if (t.wagering || t.rollDue)
+            return;                              // (the wager's hand first; a roll's verdict first)
         DialogueOption const* opt = nullptr;
         for (DialogueOption const& o : node->second.options)
             if (o.idx == idx && Visible(p, t, o))
@@ -1155,19 +1174,46 @@ namespace Dnd
             if (!ok && t.secured && def && LeadsToFight(next))
             {
                 // the problem was already solved before this went wrong: it sours instead of coming to blows
-                if (def->sourNode)
-                    next = int32(def->sourNode);
-                else
-                {
-                    CloseDialogue(p, false);
-                    Log(p, Acore::StringFormat("|cffc8b890{} has had enough of your questions, and turns away.|r", speaker->GetName()));
-                    Peace(p, speaker, *def, true);
-                    return;
-                }
+                next = def->sourNode ? int32(def->sourNode) : NEXT_TURN_AWAY;
+            }
+            // what the roll leads to (the next line, creatures running off, a fight, peace) waits for the addon's d20
+            // to show SUCCESS / FAILURE: otherwise the scene gives the result away before the die lands
+            if (!Test::IsBot(p->GetGUID()))
+            {
+                itr->second.rollDue = getMSTime() + ROLL_REVEAL_MS;
+                itr->second.rollNext = next;
+                return;
             }
         }
 
         Proceed(p, t, speaker, def, town, next);
+    }
+
+    // a rolled check's outcome, once its verdict is on screen (or at once when the talk is cut short)
+    static void ResolveRoll(Player* p)
+    {
+        auto itr = sTalks.find(p->GetGUID());
+        if (itr == sTalks.end() || !itr->second.rollDue)
+            return;
+        int32 next = itr->second.rollNext;
+        itr->second.rollDue = 0;
+        Talk t = itr->second;
+        Creature* speaker = SpeakerOf(p, t);
+        EncounterDef const* def = GetEncounterDef(t.encounterId);
+        if (!speaker)
+        {
+            CloseDialogue(p, false);
+            return;
+        }
+        if (next == NEXT_TURN_AWAY)
+        {
+            CloseDialogue(p, false);
+            Log(p, Acore::StringFormat("|cffc8b890{} has had enough of your questions, and turns away.|r", speaker->GetName()));
+            if (def)
+                Peace(p, speaker, *def, true);
+            return;
+        }
+        Proceed(p, t, speaker, def, t.townSpawn != 0, next);
     }
 
     // where an answer leads: another line, the end of the talk, a fight, or peace (t is a copy: closing the talk
@@ -1234,6 +1280,11 @@ namespace Dnd
         auto itr = sTalks.find(p->GetGUID());
         if (itr == sTalks.end())
             return;
+        if (itr->second.rollDue && int32(getMSTime() - itr->second.rollDue) >= 0)
+        {
+            ResolveRoll(p);                  // the d20's verdict is on screen: now what it leads to
+            return;
+        }
         itr->second.checkTimer += diff;
         if (itr->second.checkTimer < 500)
             return;

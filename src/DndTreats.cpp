@@ -26,10 +26,12 @@
 #include "ScriptMgr.h"
 #include "Random.h"
 #include "StringFormat.h"
+#include "Tokenize.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <set>
 
 namespace Dnd
 {
@@ -51,6 +53,7 @@ namespace Dnd
         std::string game;                    // "" none; a payoff game (PAYOFF_GAMES) or a puzzle (any other: DnDGames*.lua)
         std::string hint;                    // a flag (another treat's) that makes this one's puzzle easy: you know the song
         std::string grant;                   // a skill the find teaches: proficiency (the pick "skill:<name>")
+        std::string trial, trialRewards, trialTexts;   // a press-your-luck find (see "trials" below); "" for the rest
         bool Puzzle() const
         {
             static char const* const PAYOFF_GAMES[] = { "geode", "ice", "dig", "pry", "pan", "sift", "shards",
@@ -66,6 +69,11 @@ namespace Dnd
     struct PendingGame { uint32 id = 0, nonce = 0; };
     static std::unordered_map<ObjectGuid, PendingGame> sGame;                              // player -> the open minigame
     static std::unordered_map<ObjectGuid, std::unordered_map<uint32, uint8>> sGameLevel;  // player -> treat -> 1 + level
+    // the trials (press-your-luck finds, below)
+    struct Trial { uint32 id = 0, nonce = 0; int rung = 0; };
+    static std::unordered_map<ObjectGuid, Trial> sTrials;                                  // player -> the open trial
+    static std::unordered_map<ObjectGuid, std::set<uint32>> sTrialGate;                    // player -> trials whose way in is passed
+
 
     static std::unordered_map<uint32, TreatDef> sTreats;
     static std::unordered_map<uint32, uint32> sTellToTreat;                               // tell spawn guid -> treat
@@ -103,7 +111,8 @@ namespace Dnd
                 sTaken[tr->Fetch()[0].Get<uint32>()] = { tr->Fetch()[1].Get<uint32>(), tr->Fetch()[2].Get<std::string>() };
             while (tr->NextRow());
         QueryResult r = WorldDatabase.Query("SELECT id, map, x, y, z, o, passive, skill, dc, req, free_for, tell_guid, radius, "
-            "money, item, item_count, flag, text_look, text_found, text_success, text_fail, text_claim, text_free, game, hint, grant_skill FROM dnd_treat");
+            "money, item, item_count, flag, text_look, text_found, text_success, text_fail, text_claim, text_free, game, hint, grant_skill, "
+            "trial, trial_rewards, trial_texts FROM dnd_treat");
         if (!r)
             return;
         do
@@ -133,6 +142,9 @@ namespace Dnd
             t.game = f[23].Get<std::string>();
             t.hint = f[24].Get<std::string>();
             t.grant = f[25].Get<std::string>();
+            t.trial = f[26].Get<std::string>();
+            t.trialRewards = f[27].Get<std::string>();
+            t.trialTexts = f[28].Get<std::string>();
             if (t.tellGuid)
                 sTellToTreat[t.tellGuid] = t.id;
             sTreats[t.id] = std::move(t);
@@ -216,6 +228,8 @@ namespace Dnd
         sState[p->GetGUID()].clear();
         sGame.erase(p->GetGUID());
         sGameLevel.erase(p->GetGUID());
+        sTrials.erase(p->GetGUID());
+        sTrialGate.erase(p->GetGUID());
         CharacterDatabase.Execute("DELETE FROM dnd_character_treat WHERE guid = {}", p->GetGUID().GetCounter());
         auto& book = TakenBook(p->GetGUID());
         for (auto itr = book.begin(); itr != book.end();)
@@ -236,6 +250,8 @@ namespace Dnd
         sTimer.erase(guid);
         sGame.erase(guid);
         sGameLevel.erase(guid);
+        sTrials.erase(guid);
+        sTrialGate.erase(guid);
     }
 
     bool TreatFlagTaken(std::string const& flag)
@@ -514,6 +530,289 @@ namespace Dnd
             Missed(p, t);
     }
 
+    // ------------------------------------------------------------------ trials: press your luck
+    // A trial is a find you test yourself against, rung after rung: "Wisdom save:11,13,15,17" (or a skill: "Athletics:...").
+    // After each passed rung you may stop and take that rung's reward (trial_rewards: one bundle a rung, '|' between
+    // rungs, ',' between pieces: gold:<copper>, item:<id>[x<n>], skill:<name>, abil:<STR..CHA>, resist:<type>) or roll on
+    // for the next; one failed roll and it's all lost (the find is missed). The last rung's bundle is the big one - +1 to
+    // an ability or a resistance, for good (Sheet picks "boon:..."). The addon shows the ladder (TT^...) and answers
+    // treattrial^id^nonce^roll|stop.
+
+    static void ParseTrial(TreatDef const& t, std::string& check, std::vector<int>& dcs)
+    {
+        dcs.clear();
+        std::size_t colon = t.trial.rfind(':');
+        check = colon == std::string::npos ? t.trial : t.trial.substr(0, colon);
+        if (colon == std::string::npos)
+            return;
+        std::string list = t.trial.substr(colon + 1);      // (a local: Tokenize's pieces point into it)
+        for (std::string_view v : Acore::Tokenize(list, ',', false))
+            dcs.push_back(std::atoi(std::string(v).c_str()));
+    }
+
+    static std::vector<std::string> Split(std::string const& s, char c)
+    {
+        std::vector<std::string> out;
+        for (std::string_view v : Acore::Tokenize(s, c, true))
+            out.emplace_back(v);
+        return out;
+    }
+
+    // a save's ability ("Wisdom save" / "WIS save" -> WIS), or -1 for a skill check
+    static int TrialSaveAbility(std::string const& check)
+    {
+        if (check.size() < 8 || !StringEqualI(check.substr(check.size() - 5), " save"))
+            return -1;
+        std::string ab = check.substr(0, 3);
+        for (char& ch : ab)
+            ch = char(std::toupper(static_cast<unsigned char>(ch)));
+        for (int i = 0; i < ABILITY_COUNT; ++i)
+            if (ab == AbilityNames[i])
+                return i;
+        return -1;
+    }
+
+    static std::string AbilityLong(int i)
+    {
+        static char const* const LONG[ABILITY_COUNT] = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" };
+        return i >= 0 && i < ABILITY_COUNT ? LONG[i] : "?";
+    }
+
+    // one piece of a rung's reward, in words
+    static std::string PieceText(std::string const& piece)
+    {
+        std::size_t c = piece.find(':');
+        std::string k = piece.substr(0, c), v = c == std::string::npos ? "" : piece.substr(c + 1);
+        if (k == "gold")
+            return MoneyText(uint32(std::atoi(v.c_str())));
+        if (k == "item")
+        {
+            uint32 n = 1, id = uint32(std::atoi(v.c_str()));
+            if (std::size_t x = v.find('x'); x != std::string::npos)
+                n = uint32(std::max(1, std::atoi(v.c_str() + x + 1)));
+            ItemTemplate const* it = sObjectMgr->GetItemTemplate(id);
+            std::string name = it ? it->Name1 : "something";
+            return n > 1 ? Acore::StringFormat("{} x{}", name, n) : name;
+        }
+        if (k == "skill")
+            return "proficiency in " + v;
+        if (k == "abil")
+        {
+            for (int i = 0; i < ABILITY_COUNT; ++i)
+                if (StringEqualI(v, AbilityNames[i]))
+                    return "+1 " + AbilityLong(i) + ", for good";
+        }
+        if (k == "resist")
+        {
+            std::string low = v;
+            for (char& ch : low)
+                ch = char(std::tolower(static_cast<unsigned char>(ch)));
+            return "resistance to " + low + ", for good";
+        }
+        return piece;
+    }
+
+    static std::string BundleText(std::string const& bundle)
+    {
+        std::vector<std::string> parts;
+        for (std::string const& piece : Split(bundle, ','))
+            if (!piece.empty())
+                parts.push_back(PieceText(piece));
+        std::string out;
+        for (std::size_t i = 0; i < parts.size(); ++i)
+            out += (i == 0 ? "" : (i + 1 == parts.size() ? " and " : ", ")) + parts[i];
+        return out.empty() ? "nothing" : out;
+    }
+
+    static void SendTrial(Player* p, TreatDef const& t, Trial const& tr)
+    {
+        std::string check;
+        std::vector<int> dcs;
+        ParseTrial(t, check, dcs);
+        std::vector<std::string> bundles = Split(t.trialRewards, '|'), texts = Split(t.trialTexts, '|');
+        std::string dcList, labels;
+        for (std::size_t i = 0; i < dcs.size(); ++i)
+        {
+            dcList += (i ? "," : "") + std::to_string(dcs[i]);
+            labels += (i ? "|" : "") + BundleText(i < bundles.size() ? bundles[i] : "");
+        }
+        std::string text = tr.rung > 0 && size_t(tr.rung) <= texts.size() ? texts[tr.rung - 1] : (t.passive ? t.claim : t.success);
+        std::string title = TellName(t);
+        if (!title.empty())
+            title[0] = char(std::toupper(static_cast<unsigned char>(title[0])));
+        Send(p, Acore::StringFormat("TT^{}^{}^{}^{}^{}^{}^{}^{}", t.id, tr.nonce, title, check, tr.rung, dcList, labels, text));
+    }
+
+    static void OpenTrial(Player* p, TreatDef const& t)
+    {
+        sTrialGate[p->GetGUID()].insert(t.id);
+        Trial& tr = sTrials[p->GetGUID()];
+        if (tr.id != t.id)
+        {
+            tr = Trial();
+            tr.id = t.id;
+            tr.nonce = urand(1, 0x7FFFFFFF);
+            TellNearby(p, t, Acore::StringFormat("{} tries {}...", p->GetName(), TellName(t)));
+        }
+        SendTrial(p, t, tr);
+    }
+
+    bool BoonResists(Player* p, DmgType type)
+    {
+        for (std::string const& k : GetSheet(p).picks)
+            if (k.rfind("boon:resist:", 0) == 0 && ParseDmgType(k.substr(12)) == type)
+                return true;
+        return false;
+    }
+
+    // a rung's reward: the boons here (they're the finder's own), the goods and the skill through Reward
+    static void PayTrial(Player* p, TreatDef const& t, int rung)
+    {
+        std::vector<std::string> bundles = Split(t.trialRewards, '|'), texts = Split(t.trialTexts, '|');
+        std::string bundle = rung >= 1 && size_t(rung) <= bundles.size() ? bundles[rung - 1] : "";
+        TreatDef paid = t;                       // (Reward pays from the def: this one carries the rung's goods)
+        paid.money = 0;
+        paid.item = 0;
+        paid.itemCount = 1;
+        paid.grant.clear();
+        std::vector<std::string> boons;
+        Sheet& sh = GetSheet(p);
+        for (std::string const& piece : Split(bundle, ','))
+        {
+            std::size_t c = piece.find(':');
+            std::string k = piece.substr(0, c), v = c == std::string::npos ? "" : piece.substr(c + 1);
+            if (k == "gold")
+                paid.money += uint32(std::atoi(v.c_str()));
+            else if (k == "item")
+            {
+                paid.item = uint32(std::atoi(v.c_str()));
+                if (std::size_t x = v.find('x'); x != std::string::npos)
+                    paid.itemCount = uint32(std::max(1, std::atoi(v.c_str() + x + 1)));
+            }
+            else if (k == "skill")
+                paid.grant = v;
+            else if (k == "abil")
+            {
+                for (int i = 0; i < ABILITY_COUNT; ++i)
+                    if (StringEqualI(v, AbilityNames[i]))
+                    {
+                        if (sh.abil[i] >= 20)
+                            boons.push_back(AbilityLong(i) + " is already as high as it goes");
+                        else
+                        {
+                            ++sh.abil[i];
+                            sh.picks.push_back(std::string("boon:") + AbilityNames[i]);
+                            boons.push_back(Acore::StringFormat("+1 {} (now {}), for good", AbilityLong(i), sh.abil[i]));
+                        }
+                    }
+            }
+            else if (k == "resist")
+            {
+                std::string pick = "boon:resist:" + v;
+                if (std::find(sh.picks.begin(), sh.picks.end(), pick) == sh.picks.end())
+                    sh.picks.push_back(pick);
+                boons.push_back(PieceText(piece));
+            }
+        }
+        if (!boons.empty())
+        {
+            SaveSheet(p);
+            PushSheet(p);
+        }
+        std::string text = rung >= 1 && size_t(rung) <= texts.size() ? texts[rung - 1] : t.success;
+        for (std::string const& b : boons)
+        {
+            Log(p, "|cffffd100" + b + ".|r");
+            text += "  " + b + ".";
+        }
+        Send(p, "TTX");
+        Reward(p, paid, text, "success", TellName(t));
+    }
+
+    static void TrialFailed(Player* p, TreatDef const& t)
+    {
+        sTrials.erase(p->GetGUID());
+        sTrialGate[p->GetGUID()].erase(t.id);
+        Send(p, "TTX");
+        TellNearby(p, t, Acore::StringFormat("...and {} comes away with nothing.", p->GetName()));
+        Missed(p, t);
+    }
+
+    void TreatTrialAction(Player* p, std::string const& args)
+    {
+        uint32 id = 0, nonce = 0;
+        char what[8] = {};
+        if (std::sscanf(args.c_str(), "%u^%u^%7s", &id, &nonce, what) != 3)
+            return;
+        auto tr = sTrials.find(p->GetGUID());
+        auto ti = sTreats.find(id);
+        if (tr == sTrials.end() || tr->second.id != id || tr->second.nonce != nonce || ti == sTreats.end())
+            return;
+        TreatDef const& t = ti->second;
+        if (Taken const* who = GoneFor(p, id))
+        {
+            sTrials.erase(tr);
+            Send(p, "TTX");
+            SayGone(p, *who);
+            return;
+        }
+        if (StateOf(p, id) == TREAT_CLAIMED || p->GetMapId() != t.map || p->GetDistance(t.x, t.y, t.z) > 25.f || InCombat(p))
+            return;
+        std::string check;
+        std::vector<int> dcs;
+        ParseTrial(t, check, dcs);
+        if (std::string(what) == "stop")
+        {
+            int rung = tr->second.rung;
+            sTrials.erase(tr);
+            if (rung == 0)
+            {
+                Send(p, "TTX");                  // (walked away before trying: it's still there, the way in still open)
+                Log(p, "|cffc8b890You leave it be - for now.|r");
+                return;
+            }
+            sTrialGate[p->GetGUID()].erase(id);
+            TellNearby(p, t, Acore::StringFormat("...and {} knows when to stop.", p->GetName()));
+            PayTrial(p, t, rung);
+            return;
+        }
+        if (std::string(what) != "roll" || size_t(tr->second.rung) >= dcs.size())
+            return;
+        int dc = dcs[tr->second.rung];
+        int ab = TrialSaveAbility(check);
+        int bonus = ab >= 0 ? SaveBonus(p, Ability(ab)) : SkillBonusByName(p, check);
+        D20Result r = RollD20(bonus, ab < 0 && ItemSkillAdvantage(p, check) ? 1 : 0);
+        bool ok = r.natural == 20 || (r.natural != 1 && r.total >= dc);
+        Log(p, Acore::StringFormat("   {} (DC {}): {} - {}", check, dc, r.text, ok ? "|cff40ff40SUCCESS|r" : "|cffff4040FAILURE|r"));
+        Send(p, Acore::StringFormat("TD^{}^{}^{}^{}^{}", check, r.natural, bonus, dc, ok ? 1 : 0));
+        if (!ok)
+        {
+            TrialFailed(p, t);
+            return;
+        }
+        ++tr->second.rung;
+        if (size_t(tr->second.rung) >= dcs.size())
+        {
+            int rung = tr->second.rung;          // the top: it all comes good
+            sTrials.erase(tr);
+            sTrialGate[p->GetGUID()].erase(id);
+            TellNearby(p, t, Acore::StringFormat("...and {} sees it through to the end!", p->GetName()));
+            PayTrial(p, t, rung);
+            return;
+        }
+        SendTrial(p, t, tr->second);
+    }
+
+    void SetTestTrial(uint32 id, std::string const& trial, std::string const& rewards, std::string const& texts)
+    {
+        auto itr = sTreats.find(id);
+        if (itr == sTreats.end())
+            return;
+        itr->second.trial = trial;
+        itr->second.trialRewards = rewards;
+        itr->second.trialTexts = texts;
+    }
+
     // an active treat: the tell was clicked
     static void Attempt(Player* p, TreatDef const& t)
     {
@@ -535,6 +834,11 @@ namespace Dnd
             return;
         }
         bool free = !t.freeFor.empty() && MeetsRequirement(p, t.freeFor);
+        if (!t.trial.empty() && (free || sTrialGate[p->GetGUID()].count(t.id)))
+        {
+            OpenTrial(p, t);                     // (already through the way in, or it's open to you: straight to the ladder)
+            return;
+        }
         if (!t.game.empty())
         {
             // already rolled for this one (the game was closed): straight back in, same difficulty
@@ -563,7 +867,9 @@ namespace Dnd
         Log(p, Acore::StringFormat("   {} check (DC {}): {} - {}", t.skill, t.dc, r.text, ok ? "|cff40ff40SUCCESS|r" : "|cffff4040FAILURE|r"));
         // TD, not DR: the same tumbling d20, but nothing for a conversation panel to pick up as its last roll
         Send(p, Acore::StringFormat("TD^{}^{}^{}^{}^{}", t.skill, r.natural, bonus, t.dc, ok ? 1 : 0));
-        if (ok && !t.game.empty())
+        if (ok && !t.trial.empty())
+            OpenTrial(p, t);                     // through the way in: now the trial itself
+        else if (ok && !t.game.empty())
             OpenGame(p, t, PuzzleLevel(p, t));   // found it: now crack it open / dig it out / work the puzzle
         else if (ok)
             Reward(p, t, t.success, "success", t.skill);
@@ -674,7 +980,9 @@ namespace Dnd
                             DespawnGlint(p, id);
                             return;
                         }
-                        if (t != sTreats.end() && !t->second.game.empty())
+                        if (t != sTreats.end() && !t->second.trial.empty())
+                            OpenTrial(p, t->second);
+                        else if (t != sTreats.end() && !t->second.game.empty())
                             OpenGame(p, t->second, PuzzleLevel(p, t->second));
                         else if (t != sTreats.end())
                             Reward(p, t->second, t->second.claim, "found", "A Discovery");

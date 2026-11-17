@@ -21,6 +21,10 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "StringFormat.h"
+#include "WorldPacket.h"
+#include "Opcodes.h"
+#include "GameObject.h"
+#include "DBCStores.h"
 #include <algorithm>
 #include <cmath>
 
@@ -379,29 +383,100 @@ namespace Dnd
     static std::unordered_map<ObjectGuid, std::vector<ObjectGuid>> sMarked;
     void ForgetAoePreview(ObjectGuid g) { sMarked.erase(g); }
 
+    // the range ring: a glowing rune on the ground under a player hovering a spell in a fight, scaled to the spell's reach
+    // (or, for one all round them, its radius) - a game object (data/sql 2026_11_16_03_dnd_range_ring.sql), moved with them
+    static uint32 const RANGE_RING_ENTRY = 9100195, RANGE_RING_DISPLAY = 7783;  // Nexus_Sigil_Blue_01: one flat sigil
+    struct RangeRing { ObjectGuid go; float r = 0.f; Position at; };
+    static std::unordered_map<ObjectGuid, RangeRing> sRangeRings;
+
+    static void ClearRangeRing(Player* p)
+    {
+        auto itr = sRangeRings.find(p->GetGUID());
+        if (itr == sRangeRings.end())
+            return;
+        if (GameObject* go = p->GetMap()->GetGameObject(itr->second.go))
+        {
+            go->SetRespawnTime(0);
+            go->Delete();
+        }
+        sRangeRings.erase(itr);
+    }
+
+    static void ShowRangeRing(Player* p, float r)
+    {
+        auto itr = sRangeRings.find(p->GetGUID());
+        if (itr != sRangeRings.end() && std::fabs(itr->second.r - r) < 0.05f && itr->second.at.GetExactDist2d(p) < 0.4f &&
+            p->GetMap()->GetGameObject(itr->second.go))
+            return;                              // already there, the right size
+        ClearRangeRing(p);
+        if (r <= 0.f)
+            return;
+        // the sigil's main circle sits well inside the model's box (margin, and the knots outside it): ~2/3 of it, by eye
+        static float const RING_VISIBLE = 0.66f;
+        float base = 9.4f;
+        if (GameObjectDisplayInfoEntry const* di = sGameObjectDisplayInfoStore.LookupEntry(RANGE_RING_DISPLAY))
+            base = std::max(0.1f, std::max(di->maxX - di->minX, di->maxY - di->minY) / 2.f);
+        base *= RING_VISIBLE;
+        // built by hand, not summoned: its scale has to be set before the client first sees it (set after, it showed at
+        // the model's own size)
+        Map* map = p->GetMap();
+        GameObject* go = new GameObject();
+        if (!go->Create(map->GenerateLowGuid<HighGuid::GameObject>(), RANGE_RING_ENTRY, map, p->GetPhaseMask(), p->GetPositionX(),
+            p->GetPositionY(), p->GetPositionZ() + 0.05f, 0.f, G3D::Quat(), 100, GO_STATE_READY))
+        {
+            delete go;
+            return;
+        }
+        go->SetObjectScale(r / base);
+        go->SetRespawnTime(120);
+        go->SetSpawnedByDefault(false);
+        map->AddToMap(go, true);
+        sRangeRings[p->GetGUID()] = RangeRing{ go->GetGUID(), r, p->GetPosition() };
+    }
+
     void AoePreview(Player* p, std::string const& spellName)
     {
         auto& marks = sMarked[p->GetGUID()];
-        for (ObjectGuid g : marks)
-            if (Unit* u = ObjectAccessor::GetUnit(*p, g))
-                u->RemoveAurasDueToSpell(STATUS_MARKER);
-        marks.clear();
+        std::vector<ObjectGuid> want;            // who the arrows should be over now
+        // only the changes: an arrow taken off and put back restarts its bob (the refresh comes every 0.4 s)
+        auto settle = [&]()
+        {
+            for (ObjectGuid g : marks)
+                if (std::find(want.begin(), want.end(), g) == want.end())
+                    if (Unit* u = ObjectAccessor::GetUnit(*p, g))
+                        u->RemoveAurasDueToSpell(STATUS_MARKER);
+            for (ObjectGuid g : want)
+                if (std::find(marks.begin(), marks.end(), g) == marks.end())
+                    if (Unit* u = ObjectAccessor::GetUnit(*p, g))
+                        u->AddAura(STATUS_MARKER, u);
+            marks = want;
+        };
         Encounter* e = EncounterOf(p->GetGUID());
         if (!e || spellName.empty())
+        {
+            ClearRangeRing(p);
+            settle();
             return;
+        }
         SpellInfo const* si = nullptr;
         for (uint32 id : AllActionIds())
             if (SpellInfo const* s = sSpellMgr->GetSpellInfo(id); s && s->SpellName[0] && spellName == s->SpellName[0] && p->HasSpell(id))
                 si = s;
         if (!si)
+        {
+            ClearRangeRing(p);
+            settle();
             return;
+        }
         float radius = 0.f, cone = 0.f;
         if (si->Id == SPELL_THUNDERWAVE || si->Id == SPELL_SPIRIT_GUARDIANS)
             radius = 4.5f;                        // (all round you: the rules' own reach, DndSpells.cpp)
         else if (si->Id == SPELL_EARTH_TREMOR)
             radius = 3.f;
         else if (si->Id == SPELL_WORD_OF_RADIANCE || si->Id == SPELL_THUNDERCLAP)
-            radius = 2.f;                         // (right beside you)
+            radius = NOMINAL_MELEE_RANGE;         // (right beside you: melee reach)
+        else if (si->Id == SPELL_ARMS_OF_HADAR || si->Id == SPELL_FEY_PRESENCE)
+            radius = 3.f;
         else if (si->Id == SPELL_COLOR_SPRAY)
         {
             radius = 4.5f;
@@ -414,18 +489,20 @@ namespace Dnd
                     radius = si->Effects[i].CalcRadius(p);
                     cone = float(M_PI) / 3.f;    // WoW's cones: 60 degrees ahead of you (Spell::SelectImplicitConeTargets)
                 }
-        if (radius <= 0.f)
-            return;
-        for (Combatant const& o : e->order)
-        {
-            if (o.player || o.gone || !o.alive)
-                continue;
-            Unit* u = e->GetUnit(o);
-            if (!u || !u->IsAlive() || p->GetExactDist(u) > radius + u->GetCombatReach() || (cone > 0.f && !p->HasInArc(cone, u)))
-                continue;
-            u->AddAura(STATUS_MARKER, u);
-            marks.push_back(u->GetGUID());
-        }
+        // the ring: the edge of a spell that goes off all round you (an area, or a cone's length); none for a spell
+        // aimed at someone or somewhere
+        ShowRangeRing(p, radius);
+        if (radius > 0.f)
+            for (Combatant const& o : e->order)
+            {
+                if (o.player || o.gone || !o.alive)
+                    continue;
+                Unit* u = e->GetUnit(o);
+                if (!u || !u->IsAlive() || p->GetExactDist(u) > radius + AreaEdge(u) || (cone > 0.f && !p->HasInArc(cone, u)))
+                    continue;
+                want.push_back(u->GetGUID());
+            }
+        settle();
     }
 
     // a combatant's conditions, for the turn order's portraits ("Held,Asleep,...")
@@ -478,8 +555,75 @@ namespace Dnd
         return out;
     }
 
+    // ------------------------------------------------------------------ the creatures' unit ids ("boss1".."boss4")
+    // The turn bar's click-to-target is a secure macro, and WoW can only target a creature by name - two kobolds of one
+    // name, and a click takes the nearer. So the creatures in a fight are engaged as the client's "boss" units (the
+    // raid boss frames' SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT; the addon hides those frames): a portrait whose creature
+    // has one targets exactly that creature. Four at most - the ones sharing a name first (a unique name targets by
+    // name well enough), then the rest in turn order.
+    static std::unordered_map<ObjectGuid, std::vector<ObjectGuid>> sBossUnits;   // player -> the creatures engaged for them
+    static uint32 const BOSS_UNITS = 4;
+
+    static void SendEncounterUnit(Player* p, uint32 type, ObjectGuid unit)
+    {
+        WorldPacket data(SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT, 15);
+        data << uint32(type);                // 0 engage, 1 disengage
+        data << unit.WriteAsPacked();
+        data << uint8(0);                    // priority
+        p->SendDirectMessage(&data);
+    }
+
+    static void ReleaseBossUnits(Player* p)
+    {
+        auto itr = sBossUnits.find(p->GetGUID());
+        if (itr == sBossUnits.end())
+            return;
+        for (ObjectGuid g : itr->second)
+            SendEncounterUnit(p, 1, g);
+        sBossUnits.erase(itr);
+    }
+
+    std::vector<ObjectGuid> BossUnitsOf(ObjectGuid player)
+    {
+        auto itr = sBossUnits.find(player);
+        return itr == sBossUnits.end() ? std::vector<ObjectGuid>{} : itr->second;
+    }
+
+    static void SyncBossUnits(Encounter& e)
+    {
+        // who should have one: alive creatures, the ones sharing a name with another first
+        std::map<std::string, int> names;
+        for (Combatant const& c : e.order)
+            if (!c.player && !c.gone && c.alive)
+                ++names[c.name];
+        std::vector<ObjectGuid> want;
+        for (int pass = 0; pass < 2; ++pass)
+            for (Combatant const& c : e.order)
+                if (!c.player && !c.gone && c.alive && (names[c.name] > 1) == (pass == 0) && want.size() < BOSS_UNITS)
+                    want.push_back(c.guid);
+        for (Combatant const& viewer : e.order)
+        {
+            if (!viewer.player || viewer.gone)
+                continue;
+            Player* p = ObjectAccessor::FindPlayer(viewer.guid);
+            if (!p)
+                continue;
+            std::vector<ObjectGuid>& have = sBossUnits[p->GetGUID()];
+            if (have == want)
+                continue;
+            for (ObjectGuid g : have)                    // let go of whoever is no longer wanted (or dead)...
+                if (std::find(want.begin(), want.end(), g) == want.end())
+                    SendEncounterUnit(p, 1, g);
+            for (ObjectGuid g : want)                    // ...and engage the new ones (each takes the first free bossN)
+                if (std::find(have.begin(), have.end(), g) == have.end())
+                    SendEncounterUnit(p, 0, g);
+            have = want;
+        }
+    }
+
     void PushOrder(Encounter& e)
     {
+        SyncBossUnits(e);
         for (Combatant const& viewer : e.order)
         {
             if (!viewer.player || viewer.gone)
@@ -1047,6 +1191,13 @@ namespace Dnd
     static void Cleanup(Encounter& e)
     {
         ClearVisuals(e);
+        for (Combatant const& c : e.order)
+            if (c.player)
+                if (Player* bp = ObjectAccessor::FindPlayer(c.guid))
+                {
+                    ReleaseBossUnits(bp);        // the fight is over: no more boss units
+                    ClearRangeRing(bp);          // ...nor range rings
+                }
         for (auto itr = sFled.begin(); itr != sFled.end();)
             itr = itr->second == e.id ? sFled.erase(itr) : std::next(itr);
         for (Combatant& c : e.order)
@@ -1767,7 +1918,7 @@ namespace Dnd
                 if (a.spellId == SPELL_SPIRIT_GUARDIANS)
                     if (Player* o = ObjectAccessor::FindPlayer(a.owner))
                         at = o->GetPosition();       // the spirits go where the cleric goes
-                if (!a.owner.IsEmpty() && a.expiresMs > Now() && u->GetExactDist2d(&at) <= a.radius + u->GetCombatReach())
+                if (!a.owner.IsEmpty() && a.expiresMs > Now() && u->GetExactDist2d(&at) <= a.radius + AreaEdge(u))
                     here.push_back(a);
             }
             for (Area const& a : here)
@@ -2394,6 +2545,7 @@ namespace Dnd
         if (!e)
             return;
         EndConcentration(p, " - they left the fight");
+        ReleaseBossUnits(p);
         Combatant* c = e->Find(p->GetGUID());
         c->gone = true;
         sUnitEncounter.erase(p->GetGUID());

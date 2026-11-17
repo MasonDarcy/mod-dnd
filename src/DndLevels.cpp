@@ -716,6 +716,11 @@ namespace Dnd
                 if (int i = FeatAbility(k); i >= 0)
                     s.abil[i] -= 1;
             }
+            else if (k.rfind("boon:", 0) == 0)
+            {
+                if (int i = AbilityIndex(k.substr(5)); i >= 0)
+                    s.abil[i] -= 1;                  // (a trial's +1: the finds come back on a restart, so it goes)
+            }
             else if (k.rfind("style:", 0) == 0 || k.rfind("feat1:", 0) == 0)
                 keep.push_back(k);                   // (the style and the starting feat are level 1's; metamagic goes)
         }

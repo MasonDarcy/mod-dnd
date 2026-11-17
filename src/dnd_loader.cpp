@@ -58,6 +58,8 @@ namespace Dnd
             HandlePick(p, msg.substr(5));
         else if (msg.rfind("treatgame^", 0) == 0)
             TreatGameResult(p, msg.substr(10));
+        else if (msg.rfind("treattrial^", 0) == 0)
+            TreatTrialAction(p, msg.substr(11));
         else if (msg.rfind("tav^", 0) == 0)
             TavernMessage(p, msg.substr(4));
         else if (msg.rfind("jig^", 0) == 0)
