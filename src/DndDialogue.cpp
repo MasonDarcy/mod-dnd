@@ -253,6 +253,28 @@ namespace Dnd
         return score < 8 || score > 15 ? 1000 : cost[score - 8];
     }
 
+    // For the character sheet, after the saves (DndRules.cpp SendSaves), the server's own numbers:
+    //   SX^<18 skill bonuses, sSkills order, ','>^<18 flags: 0 none, 1 proficient, 2 expertise, 3 half (Jack of All Trades)>
+    //   SD^<initiative>^<passive Perception>^<passive Insight>^<passive Investigation>^<resistances, ','>
+    void SendDetails(Player* p)
+    {
+        std::string bonuses, flags;
+        bool jack = IsClass(p, CLASS_BARD) && Level(p) >= 2;
+        for (SkillDef const& s : sSkills)
+        {
+            bonuses += (bonuses.empty() ? "" : ",") + std::to_string(SkillBonus(p, s));
+            bool expert = HasExpertise(p, s.name), prof = Proficient(p, s);
+            flags += expert ? '2' : prof ? '1' : jack ? '3' : '0';
+        }
+        Send(p, "SX^" + bonuses + "^" + flags);
+        std::string resists;
+        for (int t = 0; t < DMG_TYPE_COUNT; ++t)
+            if (BoonResists(p, DmgType(t)) || ItemResists(p, DmgType(t)) || RacialResists(p, DmgType(t)))
+                resists += (resists.empty() ? "" : ",") + std::string(DmgTypeNames[t]);
+        Send(p, Acore::StringFormat("SD^{}^{}^{}^{}^{}", InitiativeBonus(p), 10 + SkillBonusByName(p, "Perception"),
+            10 + SkillBonusByName(p, "Insight"), 10 + SkillBonusByName(p, "Investigation"), resists));
+    }
+
     void PushSkills(Player* p)
     {
         // "K^background^created^skill,skill,..." (the addon works out the bonuses from the sheet)
@@ -320,8 +342,8 @@ namespace Dnd
             }
             skills.push_back(k);
         }
-        for (int i = 0; i < ABILITY_COUNT; ++i)
-            sh.abil[i] = base[i] + (i == plus2 ? 2 : 0) + (i == plus1 ? 1 : 0);
+        for (int i = 0; i < ABILITY_COUNT; ++i)       // (and what feats, ASIs and boons already taken add on top)
+            sh.abil[i] = std::min(20, base[i] + (i == plus2 ? 2 : 0) + (i == plus1 ? 1 : 0) + PickAbilityBonus(sh, i));
         sh.background = bg->name;
         sh.skills = skills;
         sh.created = true;
@@ -896,10 +918,15 @@ namespace Dnd
             if (other == p || (!other->IsGameMaster() && other->IsAlive() && !InCombat(other) && other->GetExactDist(speaker) <= 30.f))
                 party.push_back(other);
         });
-        for (Player* pl : party)
+        // the banner and the settler's instrument for everyone online (the win counts for them all) - not only those
+        // there; but not over a fight someone's in, and the self-test's bots and the real players never share
+        bool bots = Test::IsBot(p->GetGUID());
+        for (auto const& [guid, pl] : ObjectAccessor::GetPlayers())
         {
-            Send(pl, "RZ^" + p->GetName());  // who settled it: everyone there hears their instrument (DnDInstruments.lua)
-            Send(pl, "V^RESOLVED");          // the banner for those there; the win counts for everyone online
+            if (!pl || !pl->IsInWorld() || Test::IsBot(guid) != bots || (pl != p && InCombat(pl)))
+                continue;
+            Send(pl, "RZ^" + p->GetName());  // who settled it: they hear their instrument (DnDInstruments.lua)
+            Send(pl, "V^RESOLVED");
         }
         ShareEncounterWon(party, def, true, halfXp);
     }

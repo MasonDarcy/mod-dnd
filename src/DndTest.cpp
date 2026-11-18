@@ -314,6 +314,7 @@ namespace
         if (o.level > 1)
             p->GiveLevel(uint8(o.level));            // OnLevelUp: new spells, hit points
         s.subclass = o.sub;
+        ForgetPreBuffs(p->GetGUID());                // (no buff left over from an earlier test)
         EnsureKit(p);
         StripGear(p);
         p->UpdateMaxHealth();
@@ -1629,6 +1630,38 @@ namespace
             Expect(s, "the target was driven back (> 4 m away now)", [](Ctx& c) { return Mob(c)->GetExactDist2d(Bot(c)) > 4.f; });
             Expect(s, "Shove costs the Bonus Action", [](Ctx& c) { return BotC(c)->bonusUsed && !BotC(c)->actionUsed; });
         });
+        // a friend can be shoved too (BG3): out of harm's way or into place - they go with it, no contest
+        add("common.shove.an_ally_goes_without_a_contest", [=](Script& s)
+        {
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                Player* a = Bot(c);
+                Player* b = AddBotAt(c, FIGHTER, 1, a->GetPositionX() + 1.5f, a->GetPositionY());
+                c.v["bx"] = b->GetPositionX();
+                c.v["by"] = b->GetPositionY();
+            });
+            Rig(s, { 1, 20 });                                   // (a contest would fail: there mustn't be one)
+            s.Do([](Ctx& c)
+            {
+                Player* p = Bot(c);
+                Player* b = Bot(c, 1);
+                p->SetOrientation(p->GetAngle(b));
+                Remember(c);
+                sMsgs.clear();
+                Prep(p, SPELL_SHOVE);
+                c.v["cast"] = float(p->CastSpell(b, SPELL_SHOVE, false));
+            });
+            s.Wait(1500);
+            ExpectCastOk(s);
+            ExpectSaw(s, "a friend, who goes with it");
+            ExpectNotSaw(s, "Athletics");
+            Expect(s, "the ally was moved (more than 3 m from where they stood)", [](Ctx& c)
+            {
+                Position from(c.v["bx"], c.v["by"], 0.f);
+                return Bot(c, 1)->GetExactDist2d(&from) > 3.f;
+            });
+        });
         add("common.shove.failure", [=](Script& s)
         {
             AddBot(s, wiz1);
@@ -2322,6 +2355,51 @@ namespace
                 ClearLevelChoices(p);
                 Check(c, HasFeat(p, "Resilient") && !HasFeat(p, "Tough"), "a restart keeps the starting feat, undoes the level-4 one");
                 CheckEq(c, GetSheet(p).abil[CON] - con, 1, "and its +1 stays");
+            });
+        });
+
+        // the builder sets the scores from scratch: a feat (or ASI, or boon) already taken must still count after it
+        // WoW's own class rules don't decide what a character may hold: a cleric (a WoW priest) can equip a sword - a
+        // Tempest cleric is proficient with it, and anyone may swing one without the proficiency bonus
+        add("kit.any_class_can_equip_any_weapon", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1, "Tempest" });
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                auto first = [](uint32 cls, uint32 sub)                // a plain level-1 one-hander of that kind
+                {
+                    for (auto const& [id, t] : *sObjectMgr->GetItemTemplateStore())
+                        if (t.Class == cls && t.SubClass == sub && t.RequiredLevel <= 1 && !t.RequiredSkill && !t.RequiredSpell &&
+                            t.AllowableClass == -1 && t.AllowableRace == -1 && t.InventoryType == INVTYPE_WEAPON)
+                            return id;
+                    return 0u;
+                };
+                uint32 sword = first(ITEM_CLASS_WEAPON, ITEM_SUBCLASS_WEAPON_SWORD);
+                Check(c, sword != 0, "a one-handed sword to try");
+                uint16 dest = 0;
+                CheckEq(c, int(p->CanEquipNewItem(EQUIPMENT_SLOT_MAINHAND, dest, sword, false)), int(EQUIP_ERR_OK),
+                    "a cleric (WoW priest) can equip a one-handed sword");
+                Check(c, p->HasSkill(SKILL_SWORDS) && p->HasSkill(SKILL_PLATE_MAIL) && p->HasSkill(SKILL_SHIELD),
+                    "and has every weapon and armour skill");
+                Check(c, p->HasSpell(SPELL_RANGED_ATTACK), "and a Ranged Attack, to shoot a crossbow with (casters too)");
+                Check(c, GetSkillRaceClassInfo(SKILL_SWORDS, p->getRace(), p->getClass()) &&
+                    GetSkillRaceClassInfo(SKILL_MAIL, p->getRace(), p->getClass()) && GetSkillRaceClassInfo(SKILL_SHIELD, p->getRace(), p->getClass()),
+                    "and WoW's own table allows them (skillraceclassinfo_dbc): kept at login, the gear not mailed away");
+            });
+        });
+        add("feat.a_rebuild_keeps_the_feats_plus_one", [=](Script& s)
+        {
+            AddBot(s, { WIZ, 1 });
+            Act(s, [](Ctx& c)
+            {
+                Player* p = Bot(c);
+                HandlePick(p, "feat1^Resilient^CON");
+                HandleBuild(p, "8,14,13,15,12,10^3^2^Sage^Insight,Medicine");     // CON 13, its +1 from the build
+                CheckEq(c, GetSheet(p).abil[CON], 15, "CON 13 + the build's 1 + Resilient's 1");
+                CheckEq(c, GetSheet(p).abil[INT], 17, "INT 15 + the build's 2 (no feat there)");
+                HandleBuild(p, "8,14,13,15,12,10^3^2^Sage^Insight,Medicine");     // saving the same build again
+                CheckEq(c, GetSheet(p).abil[CON], 15, "and again: still 15, not 16");
             });
         });
 
@@ -3025,9 +3103,47 @@ namespace
             Rig(s, {}, 0);
             ExpectEq(s, "pressed on and failed: nothing, not even rung 1's", [](Ctx& c) { return float(Bot(c)->GetMoney()) - c.v["money"]; }, 0);
             ExpectSaw(s, "TTX");
+            ExpectSaw(s, "TE^fail^Wisdom save^");   // (the card names the save that failed, not the way-in Perception)
             Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1002); });
             ExpectSaw(s, "already searched");       // (missed: no second go)
             Act(s, [](Ctx&) { RemoveTestTreat(1002); });
+        });
+        add("treat.trial_long_text_arrives_whole", [=](Script& s)
+        {
+            static std::string const kLongTrialText = "A grimoire, cold as the snow around it. The first page is blank until you look at it - "
+                "then the ink crawls up out of the paper and arranges itself into a prayer you almost remember, in a hand that "
+                "might be your own. The words keep moving while you read, and they settle only when you stop trying.";
+            AddBot(s, wiz1);
+            Act(s, [](Ctx& c)
+            {
+                AddTestTreat(1003, Bot(c), "", 10, 0);
+                SetTestTrial(1003, "Wisdom save:5,25", "gold:100|gold:200", kLongTrialText + "|The rest.");
+            });
+            Rig(s, {}, 15);                         // in, and rung 1 (15 vs 5): its text is the long one
+            Act(s, [](Ctx& c) { sMsgs.clear(); UseTestTreat(Bot(c), 1003); });
+            Act(s, trial("roll"));
+            Rig(s, {}, 0);
+            Expect(s, "the text comes in UT pieces ahead of the ladder, whole", [](Ctx&)
+            {
+                std::string joined;
+                int pieces = 0;
+                for (std::string const& m : sMsgs)
+                {
+                    if (m == "UB")
+                        joined.clear(), pieces = 0;
+                    else if (m.rfind("UT^", 0) == 0)
+                        joined += m.substr(3), ++pieces;
+                }
+                return joined == kLongTrialText && pieces >= 2;
+            });
+            Expect(s, "and every piece fits an addon message", [](Ctx&)
+            {
+                for (std::string const& m : sMsgs)
+                    if (m.rfind("UT^", 0) == 0 && m.size() + 4 > 254)
+                        return false;
+                return true;
+            });
+            Act(s, [](Ctx&) { RemoveTestTreat(1003); });
         });
         add("treat.trial_the_top_rung_gives_a_boon_for_good", [=](Script& s)
         {
@@ -3797,6 +3913,34 @@ namespace
             {
                 StoryTestSet("story:regent_gone", int(c.v["regent"]));
                 StoryTestSet("story:moira_council", int(c.v["council"]));
+            });
+        });
+        // a milestone writes letters into every character's mailbox: a self-test, which sets story flags straight into
+        // the state, must never earn one (CheckMilestones does nothing while the self-test runs)
+        add("story.a_self_test_never_earns_a_milestone", [=](Script& s)
+        {
+            auto mails = []
+            {
+                QueryResult r = CharacterDatabase.Query("SELECT COUNT(*) FROM mail");
+                return r ? float(r->Fetch()[0].Get<uint64>()) : 0.f;
+            };
+            Act(s, [mails](Ctx& c)
+            {
+                c.v["mail"] = mails();
+                c.v["had"] = float(StoryValue("@milestone:frostmane_calm"));
+                c.v["seers"] = float(StoryValue("story:seers_turn"));
+                c.v["vejrek"] = float(StoryValue("story:vejrek_gone"));
+                StoryTestSet("story:seers_turn", 1);  // the Frostmane milestone's conditions, met
+                StoryTestSet("story:vejrek_gone", 1);
+                StoryTestCheckMilestones();
+            });
+            Expect(s, "the milestone isn't marked as earned",
+                [](Ctx& c) { return float(StoryValue("@milestone:frostmane_calm")) == c.v["had"]; });
+            Expect(s, "and no letters went out", [mails](Ctx& c) { return mails() == c.v["mail"]; });
+            Act(s, [](Ctx& c)
+            {
+                StoryTestSet("story:seers_turn", int(c.v["seers"]));
+                StoryTestSet("story:vejrek_gone", int(c.v["vejrek"]));
             });
         });
         add("story.clues_are_shared", [=](Script& s)
@@ -7706,6 +7850,46 @@ namespace
             Cast(s, SPELL_ATTACK);
             ExpectSaw(s, "(Bless)");
             ExpectDrop(s, 3, 0, "a hit: 1d6 (1) + 2");
+        });
+        // a buff cast before the fight (a minute, under concentration, as in 5e) is still on when it starts
+        add("cleric.bless_before_a_fight_carries_in", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            MobOpt stuck{ 2.f, 0.f };
+            stuck.st.speed = 0.f;
+            AddMob(s, stuck);
+            Act(s, [](Ctx&) { sMsgs.clear(); });
+            Cast(s, SPELL_BLESS, -1);                            // no fight yet
+            ExpectCastOk(s);
+            ExpectSaw(s, "into the next fight");
+            Expect(s, "the Blessed icon is up already, counting down its minute", [](Ctx& c)
+            {
+                Aura* a = Bot(c)->GetAura(STATUS_BLESSED);
+                return a && a->GetDuration() > 0 && a->GetDuration() <= 60 * IN_MILLISECONDS;
+            });
+            StartFight(s);
+            Expect(s, "blessed as the fight starts, under the cleric's concentration", [](Ctx& c)
+            {
+                return BotC(c)->blessedBy == Bot(c)->GetGUID() && BotC(c)->concentration == SPELL_BLESS;
+            });
+        });
+        add("cleric.a_second_concentration_spell_ends_the_first_before_a_fight", [=](Script& s)
+        {
+            AddBot(s, { CLERIC, 1 });
+            MobOpt stuck{ 2.f, 0.f };
+            stuck.st.speed = 0.f;
+            AddMob(s, stuck);
+            Cast(s, SPELL_BLESS, -1);
+            ExpectCastOk(s);
+            Act(s, [](Ctx& c) { LongRest(Bot(c)); });            // (a fresh slot for the second spell)
+            Cast(s, SPELL_SHIELD_OF_FAITH, -1);                  // concentration moves to Shield of Faith
+            ExpectCastOk(s);
+            StartFight(s);
+            Expect(s, "Shield of Faith carries in, the Bless it replaced doesn't", [](Ctx& c)
+            {
+                return BotC(c)->faithBy == Bot(c)->GetGUID() && BotC(c)->blessedBy.IsEmpty() &&
+                    BotC(c)->concentration == SPELL_SHIELD_OF_FAITH;
+            });
         });
         add("cleric.guiding_bolt_lights_the_target", [=](Script& s)
         {

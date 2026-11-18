@@ -23,6 +23,8 @@
 #include "Chat.h"
 #include "Creature.h"
 #include "DatabaseEnv.h"
+#include "Item.h"
+#include "Mail.h"
 #include "Map.h"
 #include "MapMgr.h"
 #include "ObjectAccessor.h"
@@ -51,6 +53,9 @@ namespace Dnd
         std::map<uint32, std::string> sAbsent;
         std::unordered_map<uint32, std::string> sStorySpawns;      // creature guid -> the condition to be there
         std::vector<Rumor> sRumors;
+        // a thread's turning point: a banner for everyone online, and a letter with a reward for every character
+        struct Milestone { std::string id, cond, title, headline, subject, letter; uint32 sender = 0, money = 0, item = 0; };
+        std::vector<Milestone> sMilestones;
         std::map<std::string, int> sState;
         std::string sLeanNeg = "Ruthless", sLeanPos = "Merciful";
         struct LogEntry { uint32 at; std::string who, kind, text; };
@@ -228,6 +233,54 @@ namespace Dnd
     }
 
     // (the story key behind a flag: "story:" flags are stored by their bare name)
+    // a letter (and the reward with it) to every character on the server, from whoever the milestone names
+    static void MailMilestone(Milestone const& m)
+    {
+        CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+        uint32 sent = 0;
+        if (QueryResult r = CharacterDatabase.Query("SELECT guid FROM characters"))
+            do
+            {
+                uint32 low = r->Fetch()[0].Get<uint32>();
+                MailDraft draft(m.subject, m.letter);
+                if (m.money)
+                    draft.AddMoney(m.money);
+                if (m.item)
+                    if (Item* it = Item::CreateItem(m.item, 1))
+                    {
+                        it->SaveToDB(trans);
+                        draft.AddItem(it);
+                    }
+                Player* online = ObjectAccessor::FindPlayerByLowGUID(low);
+                draft.SendMailTo(trans, online ? MailReceiver(online) : MailReceiver(low), MailSender(MAIL_CREATURE, m.sender),
+                    MAIL_CHECK_MASK_COPIED);
+                ++sent;
+            } while (r->NextRow());
+        CharacterDatabase.CommitTransaction(trans);
+        FileLog(Acore::StringFormat("story: milestone {} - {} letters", m.id, sent));
+    }
+
+    // the milestones that have just come true (announce: a live change; false: found true at start-up - mailed quietly)
+    static void CheckMilestones(bool announce)
+    {
+        if (Test::Running())
+            return;                              // (a self-test's flags never earn the world a milestone)
+        for (Milestone const& m : sMilestones)
+        {
+            std::string key = "@milestone:" + m.id;
+            if (StoryValue(key) || !StoryConds(m.cond))
+                continue;
+            Store(key, 1);
+            MailMilestone(m);
+            StoryLog("", "milestone", m.title + ": " + m.headline);
+            if (!announce)
+                continue;
+            for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
+                if (p && p->IsInWorld())
+                    Send(p, "YM^" + m.title + "^" + m.headline);
+        }
+    }
+
     void StoryApply(std::string const& effects, Player* by)
     {
         if (effects.empty())
@@ -294,6 +347,7 @@ namespace Dnd
         for (auto const& [guid, p] : ObjectAccessor::GetPlayers())
             if (p && p->IsInWorld())
                 PushJournal(p);
+        CheckMilestones(true);
     }
 
     void StoryOutcome(uint32 encounterId, std::string const& how, Player* by)
@@ -309,7 +363,10 @@ namespace Dnd
         if (itr != sOutcomes.end())
             StoryApply(itr->second, by);
         else
+        {
             ApplyWorld();
+            CheckMilestones(true);               // (a milestone can wait on an encounter being resolved)
+        }
     }
 
     void StoryNodeReached(uint32 node, std::string const& effects, Player* by)
@@ -446,6 +503,24 @@ namespace Dnd
         sAbsent.clear();
         sStorySpawns.clear();
         sRumors.clear();
+        sMilestones.clear();
+        if (QueryResult r = WorldDatabase.Query("SELECT id, cond, title, headline, sender, subject, letter, money, item "
+                                                "FROM dnd_story_milestone ORDER BY sort"))
+            do
+            {
+                Field* f = r->Fetch();
+                Milestone m;
+                m.id = f[0].Get<std::string>();
+                m.cond = f[1].Get<std::string>();
+                m.title = f[2].Get<std::string>();
+                m.headline = f[3].Get<std::string>();
+                m.sender = f[4].Get<uint32>();
+                m.subject = f[5].Get<std::string>();
+                m.letter = f[6].Get<std::string>();
+                m.money = f[7].Get<uint32>();
+                m.item = f[8].Get<uint32>();
+                sMilestones.push_back(std::move(m));
+            } while (r->NextRow());
         if (QueryResult r = WorldDatabase.Query("SELECT id, name, description FROM dnd_story_faction ORDER BY sort"))
             do
                 sFactions.push_back({ r->Fetch()[0].Get<std::string>(), r->Fetch()[1].Get<std::string>(), r->Fetch()[2].Get<std::string>() });
@@ -500,10 +575,12 @@ namespace Dnd
             do
                 sState[r->Fetch()[0].Get<std::string>()] = r->Fetch()[1].Get<int32>();
             while (r->NextRow());
-        LOG_INFO("module", "mod-dnd: the story - {} factions, {} threads, {} outcomes, {} story flags set", sFactions.size(),
-            sThreads.size(), sOutcomes.size(), sState.size());
+        LOG_INFO("module", "mod-dnd: the story - {} factions, {} threads, {} outcomes, {} story flags set, {} milestones",
+            sFactions.size(), sThreads.size(), sOutcomes.size(), sState.size(), sMilestones.size());
+        CheckMilestones(false);                  // (what the party earned before milestones existed, or while it was down)
     }
 
     // the self-test's: a story flag set or cleared directly (no outcome, no journal), and forgetting what it set
     void StoryTestSet(std::string const& key, int value) { Store(key, value); }
+    void StoryTestCheckMilestones() { CheckMilestones(true); }
 }

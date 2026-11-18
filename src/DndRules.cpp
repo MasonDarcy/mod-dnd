@@ -1438,5 +1438,38 @@ namespace Dnd
             SpellSaveDC(p), SpellAttackBonus(p), Speed(p), 2 - s.shortRestsUsed, slots) +
             Acore::StringFormat("^{}^{}^{}^{}", s.wardHp, s.subclass, [&] { std::string r; for (auto const& k : s.picks)
                 r += (r.empty() ? "" : ",") + k; return r; }(), res));
+        SendSaves(p);
+    }
+
+    // Saving throws for the sheet and the character screen (their own line: the S line is already long):
+    // SV^str^dex^con^int^wis^cha^<proficient: six 0/1>^<advantage notes, "i:text;..." - i 1-6 an ability, 0 any save>
+    // The bonuses are SaveBonus itself (proficiency, Resilient, Shield Master, warding items), so they match the rolls.
+    void SendSaves(Player* p)
+    {
+        ClassDef const* c = ClassInfo(p);
+        std::string bonuses, prof, adv;
+        auto note = [&adv](int i, char const* text) { adv += Acore::StringFormat("{}{}:{}", adv.empty() ? "" : ";", i, text); };
+        for (int i = 0; i < ABILITY_COUNT; ++i)
+        {
+            Ability a = Ability(i);
+            bonuses += "^" + std::to_string(SaveBonus(p, a));
+            prof += (a == c->save1 || a == c->save2 || FeatOption(p, "Resilient") == AbilityNames[a]) ? '1' : '0';
+        }
+        if (p->getRace() == RACE_GNOME)
+        {
+            note(INT + 1, "adv. vs magic (Gnome Cunning)");
+            note(WIS + 1, "adv. vs magic (Gnome Cunning)");
+            note(CHA + 1, "adv. vs magic (Gnome Cunning)");
+        }
+        if (p->getRace() == RACE_DWARF)
+            note(0, "adv. vs poison (Dwarven Resilience)");
+        if (IsClass(p, CLASS_BARBARIAN))
+        {
+            if (Level(p) >= 2)
+                note(DEX + 1, "adv. (Danger Sense)");
+            note(STR + 1, "adv. while raging");
+        }
+        Send(p, "SV" + bonuses + "^" + prof + "^" + adv);
+        SendDetails(p);
     }
 }

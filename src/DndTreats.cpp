@@ -491,12 +491,15 @@ namespace Dnd
         return t.dc >= 14 ? 1 : 0;
     }
 
-    static void Missed(Player* p, TreatDef const& t)
+    // check: what was failed, for the card's title - the treat's own skill unless a trial's rung (its save) was
+    static void Missed(Player* p, TreatDef const& t, std::string const& check = "")
     {
         SetState(p, t.id, TREAT_MISSED);
         sGameLevel[p->GetGUID()].erase(t.id);
-        Log(p, "|cffc8b890" + t.fail + "|r");
-        SendCard(p, "fail", t.skill, t.fail, "");
+        std::string text = t.fail.empty() && !check.empty() ? "You come away with nothing." : t.fail;
+        if (!text.empty())
+            Log(p, "|cffc8b890" + text + "|r");
+        SendCard(p, "fail", check.empty() ? t.skill : check, text, "");
     }
 
     // the addon's answer: treatgame^id^nonce^1 (done) or ^0 (out of tries)
@@ -640,6 +643,21 @@ namespace Dnd
         std::string title = TellName(t);
         if (!title.empty())
             title[0] = char(std::toupper(static_cast<unsigned char>(title[0])));
+        // the text in full first (UB, then UT^<piece>...): the ladder line is cut at the addon message limit and the text
+        // comes last in it. The ladder keeps its own copy for addons that don't know UT (they ignore U messages).
+        Send(p, "UB");
+        for (std::size_t pos = 0; pos < text.size();)
+        {
+            std::size_t len = std::min<std::size_t>(200, text.size() - pos);
+            if (pos + len < text.size())
+            {
+                std::size_t sp = text.rfind(' ', pos + len);
+                if (sp != std::string::npos && sp > pos)
+                    len = sp - pos + 1;
+            }
+            Send(p, "UT^" + text.substr(pos, len));
+            pos += len;
+        }
         Send(p, Acore::StringFormat("TT^{}^{}^{}^{}^{}^{}^{}^{}", t.id, tr.nonce, title, check, tr.rung, dcList, labels, text));
     }
 
@@ -735,7 +753,10 @@ namespace Dnd
         sTrialGate[p->GetGUID()].erase(t.id);
         Send(p, "TTX");
         TellNearby(p, t, Acore::StringFormat("...and {} comes away with nothing.", p->GetName()));
-        Missed(p, t);
+        std::string check;
+        std::vector<int> dcs;
+        ParseTrial(t, check, dcs);
+        Missed(p, t, check.empty() ? t.skill : check);   // (the rung's save failed, not the way-in check)
     }
 
     void TreatTrialAction(Player* p, std::string const& args)

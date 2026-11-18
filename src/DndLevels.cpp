@@ -96,6 +96,30 @@ namespace Dnd
         return -1;
     }
 
+    // what the picks have added to ability i: asi:X +2, asi2:X+Y +1 each, a feat's +1 (feat: and the starting feat1:),
+    // a trial's boon:X +1. The builder sets the scores from scratch and adds this back (a rebuild after a feat kept
+    // losing the feat's +1).
+    int PickAbilityBonus(Sheet const& s, int i)
+    {
+        int b = 0;
+        for (std::string const& k : s.picks)
+        {
+            if (k.rfind("asi:", 0) == 0)
+                b += AbilityIndex(k.substr(4)) == i ? 2 : 0;
+            else if (k.rfind("asi2:", 0) == 0)
+            {
+                std::string both = k.substr(5);
+                for (std::string_view v : Acore::Tokenize(both, '+', false))
+                    b += AbilityIndex(std::string(v)) == i ? 1 : 0;
+            }
+            else if (k.rfind("feat:", 0) == 0 || k.rfind("feat1:", 0) == 0)
+                b += FeatAbility(k) == i ? 1 : 0;
+            else if (k.rfind("boon:", 0) == 0)
+                b += AbilityIndex(k.substr(5)) == i ? 1 : 0;
+        }
+        return b;
+    }
+
     bool IsSubclass(Player* p, char const* name) { return StringEqualI(GetSheet(p).subclass, name); }
 
     // a feat taken at an ASI ("feat:Name[:Variant]") or the one every character starts with ("feat1:...")

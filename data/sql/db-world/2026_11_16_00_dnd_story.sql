@@ -23,6 +23,11 @@ CREATE TABLE `dnd_story_world` (`guid` INT UNSIGNED NOT NULL, `cond` VARCHAR(255
 DROP TABLE IF EXISTS `dnd_story_rumor`;
 CREATE TABLE `dnd_story_rumor` (`id` INT UNSIGNED NOT NULL, `zone` INT UNSIGNED NOT NULL, `cond` VARCHAR(255) NOT NULL,
   `text` VARCHAR(500) NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+DROP TABLE IF EXISTS `dnd_story_milestone`;
+CREATE TABLE `dnd_story_milestone` (`id` VARCHAR(32) NOT NULL, `cond` VARCHAR(255) NOT NULL, `title` VARCHAR(64) NOT NULL,
+  `headline` VARCHAR(255) NOT NULL, `sender` INT UNSIGNED NOT NULL, `subject` VARCHAR(64) NOT NULL, `letter` VARCHAR(1000) NOT NULL,
+  `money` INT UNSIGNED NOT NULL, `item` INT UNSIGNED NOT NULL, `sort` SMALLINT UNSIGNED NOT NULL,
+  PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 INSERT INTO `dnd_story_faction` (`id`, `name`, `description`, `sort`) VALUES
 ('ironforge', 'Ironforge', 'King Magni\'s hold and the Mountaineers who keep its roads.', 0),
 ('explorers', 'The Explorers\' League', 'Diggers, scholars and map-makers, always somewhere they shouldn\'t be.', 1),
@@ -334,7 +339,23 @@ INSERT INTO `dnd_story_world` (`guid`, `cond`) VALUES
 (9004005, 'story:lady_gone'),
 (9004006, 'story:magni_restored'),
 (9004010, '!resolved:41'),
-(9004011, '!resolved:40');
+(9004011, '!resolved:40'),
+(44, 'resolved:152,resolved:160'),
+(46, 'resolved:152,resolved:160'),
+(57, 'resolved:152,resolved:160'),
+(101, 'resolved:152,resolved:160'),
+(106, 'resolved:152,resolved:160'),
+(114, 'resolved:152,resolved:160'),
+(121, 'resolved:152,resolved:160'),
+(1750, 'resolved:152,resolved:160'),
+(1759, 'resolved:152,resolved:160'),
+(1817, 'resolved:152,resolved:160'),
+(1893, 'resolved:152,resolved:160'),
+(2009, 'resolved:152,resolved:160'),
+(2024, 'resolved:152,resolved:160'),
+(2081, 'resolved:152,resolved:160'),
+(19272, 'resolved:174'),
+(190, 'resolved:179');
 INSERT INTO `dnd_story_rumor` (`id`, `zone`, `cond`, `text`) VALUES
 (1, 2, 'story:copperveins_hunt', '"The Coppervein brothers came through asking after a smooth fellow who sells claims. Nobody liked the look on their faces."'),
 (2, 2, 'story:thalgrim_freed,!story:copperveins_hunt', '"Thalgrim Coppervein walked out of Gol\'Bolar on his own two feet, they say. Someone pulled him out of there."'),
@@ -393,6 +414,21 @@ INSERT INTO `dnd_story_rumor` (`id`, `zone`, `cond`, `text`) VALUES
 (55, 20, 'story:voljin_stays', '"The Darkspear drums are beating for the loa, not for war. Vol\'jin\'s keeping his people home."'),
 (56, 20, 'story:runthak_to_garrosh', '"Old Runthak stormed into the Valley of Honor and shouted at Hellscream for an hour. Best show in Orgrimmar."'),
 (57, 17, 'story:deathstalkers_know', '"The Deathstalkers went down to the Apothecarium in force last night. Nobody\'s saying what for."');
+INSERT INTO `dnd_story_milestone` (`id`, `cond`, `title`, `headline`, `sender`, `subject`, `letter`, `money`, `item`, `sort`) VALUES
+('crown_council', 'story:moira_council,story:loyalists_stand_down,!story:regent_gone', 'The Council of Three Hammers', 'The clans have come to Ironforge: Bronzebeard, Wildhammer and Dark Iron rule together.', 9100101, 'The Council of Three Hammers', 'Friend - the High Seat has three chairs now, and Ironforge has you to thank for the third. The clans remember who talked them to the table instead of the gallows. Take this with the Council\'s gratitude. - Muradin Bronzebeard', 50000, 858, 1),
+('crown_regent_slain', 'story:moira_dead', 'The High Seat Stands Empty', 'The regent of Ironforge is dead on her own throne.', 9100103, 'The High Seat', 'The regent is dead, and the city is mine to hold until the clans decide who sits in that chair. I didn\'t ask how it was done. I\'m paying you for the doing of it. - Captain Durgen Stoutbeard', 30000, 858, 2),
+('crown_regent_murdered', 'story:moira_murdered', 'The Regent Is Murdered', 'Moira Thaurissan has been murdered in Ironforge.', 9100103, 'The High Seat', 'The loyalists did what they swore they would. The city is mine to hold now. You stood aside and let it happen; some would call that wisdom. Here is what wisdom pays. - Captain Durgen Stoutbeard', 30000, 858, 3),
+('magni_restored', 'story:magni_restored', 'The King Wakes', 'King Magni Bronzebeard walks again in Ironforge.', 2784, 'Diamond and Flesh', 'I\'m told I owe my heartbeat to you. A king doesn\'t forget that kind of debt, and this one won\'t. Come and see me in the throne room some day - I\'ll pour. - Magni', 100000, 858, 4),
+('lady_gone', 'story:lady_gone', 'Stormwind\'s Throne Restored', 'Highlord Bolvar Fordragon sits on the throne of Stormwind again.', 1748, 'The King\'s Hall', 'Whatever sat on that throne is gone, and the kingdom breathes easier for it. Stormwind\'s thanks, and mine. SI:7 will be watching the stair she left by. - Bolvar Fordragon', 50000, 858, 5),
+('drums_silenced', 'story:drums_silenced,story:eitrigg_peace,story:plague_stopped', 'The Drums Fall Silent', 'The Horde\'s march to war has stalled: the drums are quiet, and the plague stays in its vats.', 4949, 'From Orgrimmar', 'I don\'t know who you are, or why you did it. But my people will see another winter without war because of you. Lok\'tar. - Thrall', 80000, 858, 6),
+('doors_shut', 'story:dig_ended,story:anathemus_sleeps,story:keeper_stood_down,story:watcher_rests', 'The Deep Doors Are Shut', 'Every door the digging woke has been shut again.', 5387, 'For the League\'s Records', 'The League has written it all down, and closed the file, and I have locked the file in my desk. Some things are better asleep. With the League\'s thanks - and its discretion. - Magellas', 80000, 858, 7),
+('twilight_routed', 'story:magni_ritual_known,story:highlord_gone,story:circle_broken', 'The Cult Is Routed', 'The Twilight\'s Hammer has lost its preacher, its highlord and its circle.', 1284, 'A Blessing', 'The Light does not often get help this direct. The cult will try again - they always do - but not soon, and not here. Go with my blessing. - Benedictus', 80000, 858, 8),
+('exiles_home', 'story:fimble_left,story:refugees_helped', 'Tinker Town Remembers', 'Gnomeregan\'s exiles have found their way home to Tinker Town.', 7937, 'Gnomish Gratitude (with Diagram)', 'On behalf of every gnome who ever slept in a scrap heap: thank you. Enclosed: reward, and a diagram of a better reward I am still building. - Gelbin Mekkatorque', 60000, 858, 9),
+('advance_stalled', 'story:dam_saved,story:oil_spoiled,story:forges_cold,story:slaves_freed', 'Thaurissan\'s Road Is Broken', 'The Dark Iron advance on Ironforge has nothing left to march on.', 9100101, 'The Emperor\'s Road', 'No flood, no oil, no forges, no slaves. The Emperor can sit in his mountain and stew. Ironforge sleeps sound tonight, and you\'re the reason. - Muradin', 80000, 858, 10),
+('frostmane_calm', 'story:seers_turn,story:vejrek_gone', 'The Frostmane Are Quiet', 'The Frostmane seers dream with clear eyes, and the war-chief is gone.', 1252, 'From Kharanos', 'Thirty winters I\'ve watched those peaks for trouble. This is the first one I\'ll sleep through. A round on me, and something for the road. - Senir Whitebeard', 40000, 858, 11),
+('masons_due', 'story:masons_paid,story:vineyard_returned,story:wizards_home', 'Old Debts Paid', 'The stonemasons have their wages, and Elwynn its peace.', 1646, 'Accounts Settled', 'The Guild\'s ledger balances for the first time in fifteen years. I am told this is your doing. The city architect\'s office is - grateful. - Baros Alexston', 60000, 858, 12),
+('dragonmaw_gone', 'story:maruk_gone,story:dragonmaw_broken', 'The Wetlands Are Free', 'The Dragonmaw are gone from the Wetlands.', 2104, 'From Menethil Harbor', 'The roads are ours again and the caravans are moving. Menethil drinks to you. - Captain Stoutfist', 60000, 858, 13),
+('cloaks_broken', 'story:vault_sealed,story:highwaymen_gone', 'The Syndicate Breaks', 'The Syndicate has lost its magus and its road in Arathi.', 2700, 'From Refuge Pointe', 'Arathi\'s a little quieter, and the League of Arathor owes you for it. - Captain Nials', 60000, 858, 14);
 DELETE FROM `creature_template` WHERE `entry` BETWEEN 9100160 AND 9100189;
 DELETE FROM `creature_template_model` WHERE `CreatureID` BETWEEN 9100160 AND 9100189;
 DELETE FROM `creature_template_addon` WHERE `entry` BETWEEN 9100160 AND 9100189;

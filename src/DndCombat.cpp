@@ -750,6 +750,14 @@ namespace Dnd
     }
 
     // ------------------------------------------------------------------ start / join
+    // a player's initiative bonus (the fight's roll and the sheet both use it): DEX, Alert +5, gear, a bard's Jack of
+    // All Trades (half proficiency, from 2)
+    int InitiativeBonus(Player* p)
+    {
+        return AbilityMod(p, DEX) + (HasFeat(p, "Alert") ? 5 : 0) + ItemInitiative(p) +
+            (IsClass(p, CLASS_BARD) && Level(p) >= 2 ? Prof(Level(p)) / 2 : 0);
+    }
+
     static Combatant MakeCombatant(Unit* u, std::string& rollText)
     {
         Combatant c;
@@ -758,10 +766,10 @@ namespace Dnd
         c.name = u->GetName();
         c.dexMod = AbilityMod(u, DEX);
         // Alert: +5 to initiative
-        D20Result r = RollD20(c.dexMod + (u->IsPlayer() && HasFeat(u->ToPlayer(), "Alert") ? 5 : 0) +
-            (u->IsPlayer() ? ItemInitiative(u->ToPlayer()) : 0) +
-            (u->IsPlayer() && IsClass(u->ToPlayer(), CLASS_BARD) && Level(u->ToPlayer()) >= 2 ? Prof(Level(u->ToPlayer())) / 2 : 0), 0);
+        D20Result r = RollD20(u->IsPlayer() ? InitiativeBonus(u->ToPlayer()) : c.dexMod, 0);
         c.initiative = r.total;
+        if (c.player)
+            ApplyPreBuffs(c);                // Bless, Haste... cast before the fight (DndSpells.cpp)
         c.lastPos = u->GetPosition();
         if (Creature* cr = u->ToCreature())
             RollCarried(c, cr);                  // the potions and scrolls it has on it this time

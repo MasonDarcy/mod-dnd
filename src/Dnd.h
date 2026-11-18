@@ -535,8 +535,12 @@ namespace Dnd
     void FileLog(std::string const& text);
     void Error(Player* p, std::string const& text);         // red UI error
     void PushSheet(Player* p);
+    void SendSaves(Player* p);                // SV^...: saving throws for the sheet and character screen
+    void SendDetails(Player* p);              // DndDialogue.cpp: SX^ skills, SD^ initiative, passives, resistances
+    int InitiativeBonus(Player* p);           // DndCombat.cpp: DEX, Alert, gear, Jack of All Trades
     void HandleClientMessage(Player* p, std::string const& msg);
     void HandleBuild(Player* p, std::string const& args);   // the character creation screen's choices
+    int PickAbilityBonus(Sheet const& s, int i);   // DndLevels.cpp: what feats, ASIs and boons add to ability i
     void PushSkills(Player* p);
 
     // ---------------------------------------------------------------- combat
@@ -837,6 +841,8 @@ namespace Dnd
     // Sleet Storm); true if it loses the turn
     bool AreaTurnStart(Player* owner, Unit* u, uint32 spellId);
     bool IsConcentrationSpell(uint32 id);
+    void ApplyPreBuffs(Combatant& c);           // buffs cast before a fight, handed to its Combatant (DndSpells.cpp)
+    void ForgetPreBuffs(ObjectGuid g);
     bool ConcentrationLive(Encounter const& e, Combatant const& caster);   // still holding someone (Hex: always)
     void EndConcentration(Unit* caster, std::string const& why);
     void ConcentrationCheck(Unit* u, int damage, Unit* attacker);       // a player's or a casting creature's
@@ -1046,6 +1052,7 @@ namespace Dnd
     void StoryLearnClue(std::string const& scope, std::string const& clue);
     std::vector<std::string> StoryClues(std::string const& scope);
     void StoryTestSet(std::string const& key, int value);   // the self-test's: a flag straight into the state
+    void StoryTestCheckMilestones();                         // the self-test's: run the milestone check now
     uint32 DndZoneOf(Player* p);                         // DndProgress.cpp: the zone (dnd_zone id) the player is in
     void AoePreview(Player* p, std::string const& spellName);   // hovering an area spell: who it would catch ("" clears)
     void ForgetAoePreview(ObjectGuid g);                     // DndCombat.cpp: before the first turn, this player goes first (the jig)                // DndCombat.cpp: the fight just ends - no wipe, no grace (the spell jig)

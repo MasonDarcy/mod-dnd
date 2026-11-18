@@ -1688,6 +1688,125 @@ namespace Dnd
 
     bool IsCreatureMissile(uint32 id) { return id >= SPELL_CREATURE_THROW && id <= SPELL_CREATURE_GUN; }
 
+    // ------------------------------------------------------------------ buffs cast before a fight
+    // Bless, Shield of Faith, Haste... live on the fight's Combatant, so cast outside a fight they used to say "X is
+    // blessed" and do nothing. Now they're kept here - on whom, by whom, until when (a minute; Death Ward 8 hours, as in
+    // 5e) - with what each caster is concentrating on, and handed to the Combatant when that player joins a fight
+    // (ApplyPreBuffs, from MakeCombatant). A concentration buff lasts while its caster holds that same spell.
+    struct PreBuff { uint32 spell; ObjectGuid caster; uint32 until; };
+    static std::unordered_map<ObjectGuid, std::vector<PreBuff>> sPreBuffs;                  // target -> buffs
+    static std::unordered_map<ObjectGuid, std::pair<uint32, uint32>> sPreConcentration;    // caster -> spell, until
+    static uint32 PreNow() { return GameTime::GetGameTimeMS().count(); }
+
+    // the buff icon each one shows (the fight's status auras), so it's there to see before the fight too
+    static uint32 PreBuffStatus(uint32 spell)
+    {
+        switch (spell)
+        {
+            case SPELL_BLESS:                return STATUS_BLESSED;
+            case SPELL_SHIELD_OF_FAITH:      return STATUS_SHIELD_OF_FAITH;
+            case SPELL_SANCTUARY:            return STATUS_SANCTUARY;
+            case SPELL_HASTE:                return STATUS_HASTED;
+            case SPELL_GREATER_INVISIBILITY: return STATUS_INVISIBLE;
+            case SPELL_STONESKIN:            return STATUS_STONESKIN;
+            case SPELL_HEROISM:              return STATUS_HEROISM;
+            case SPELL_DEATH_WARD:           return STATUS_DEATH_WARD;
+            default:                         return 0;
+        }
+    }
+
+    // a status icon with a countdown (the status auras themselves last until removed)
+    static void ShowTimedStatus(Unit* u, uint32 status, uint32 ms)
+    {
+        if (!u || !status)
+            return;
+        u->RemoveAurasDueToSpell(status);
+        if (Aura* a = u->AddAura(status, u))
+        {
+            a->SetMaxDuration(int32(ms));
+            a->SetDuration(int32(ms));
+        }
+    }
+
+    // a concentration spell cast outside a fight: the one held before ends (its buffs - and their icons - with it),
+    // this one begins
+    static void NotePreConcentration(Player* caster, uint32 spell)
+    {
+        auto old = sPreConcentration.find(caster->GetGUID());
+        if (old != sPreConcentration.end() && old->second.first != spell)
+            for (auto& [target, buffs] : sPreBuffs)
+                for (PreBuff const& b : buffs)
+                    if (b.caster == caster->GetGUID() && b.spell == old->second.first)
+                        if (Player* t = ObjectAccessor::FindPlayer(target); t && !CombatantOf(target))
+                            t->RemoveAurasDueToSpell(PreBuffStatus(b.spell));
+        sPreConcentration[caster->GetGUID()] = { spell, PreNow() + 60 * IN_MILLISECONDS };
+        ShowTimedStatus(caster, STATUS_CONCENTRATING, 60 * IN_MILLISECONDS);
+    }
+
+    static void AddPreBuff(Player* caster, Unit* target, uint32 spell)
+    {
+        if (!target->IsPlayer())
+            return;
+        uint32 ms = spell == SPELL_DEATH_WARD ? 8 * HOUR * IN_MILLISECONDS : 60 * IN_MILLISECONDS;
+        if (IsConcentrationSpell(spell))
+            NotePreConcentration(caster, spell);         // (first: a switch takes the old icons off)
+        std::vector<PreBuff>& v = sPreBuffs[target->GetGUID()];
+        v.erase(std::remove_if(v.begin(), v.end(), [&](PreBuff const& b) { return b.spell == spell; }), v.end());
+        v.push_back({ spell, caster->GetGUID(), PreNow() + ms });
+        ShowTimedStatus(target, PreBuffStatus(spell), ms);   // the buff icon, counting down its minute
+    }
+
+    // (The notes and buffs stay until they run out - a second fight inside the minute gets them too, as in 5e; a
+    // concentration broken in a fight drops the caster's note: ForgetPreConcentration, from EndConcentration.)
+    void ApplyPreBuffs(Combatant& c)
+    {
+        uint32 now = PreNow();
+        if (auto pc = sPreConcentration.find(c.guid); pc != sPreConcentration.end())
+        {
+            if (pc->second.second > now && !c.concentration)
+                c.concentration = pc->second.first;         // still holding it as the fight starts
+            else if (pc->second.second <= now)
+                sPreConcentration.erase(pc);
+        }
+        auto itr = sPreBuffs.find(c.guid);
+        if (itr == sPreBuffs.end())
+            return;
+        itr->second.erase(std::remove_if(itr->second.begin(), itr->second.end(), [now](PreBuff const& b) { return b.until <= now; }),
+            itr->second.end());
+        for (PreBuff const& b : itr->second)
+        {
+            if (b.until <= now)
+                continue;
+            if (IsConcentrationSpell(b.spell))
+            {
+                // the caster must still hold it: in the fight already (their Combatant), or about to join (the note)
+                Combatant const* by = CombatantOf(b.caster);
+                auto note = sPreConcentration.find(b.caster);
+                bool held = (by && by->concentration == b.spell) || (note != sPreConcentration.end() &&
+                    note->second.first == b.spell && note->second.second > now) || (b.caster == c.guid && c.concentration == b.spell);
+                if (!held)
+                    continue;
+            }
+            switch (b.spell)
+            {
+                case SPELL_BLESS:                c.blessedBy = b.caster; break;
+                case SPELL_SHIELD_OF_FAITH:      c.faithBy = b.caster; break;
+                case SPELL_SANCTUARY:            c.sanctuaryBy = b.caster; break;
+                case SPELL_HASTE:                c.hastedBy = b.caster; break;
+                case SPELL_GREATER_INVISIBILITY: c.invisibleBy = b.caster; break;
+                case SPELL_STONESKIN:            c.stoneskinBy = b.caster; break;
+                case SPELL_HEROISM:              c.heroismBy = b.caster; break;
+                case SPELL_DEATH_WARD:           c.deathWard = true; break;
+                default: break;
+            }
+        }
+        if (itr->second.empty())
+            sPreBuffs.erase(itr);
+    }
+
+    static void ForgetPreConcentration(ObjectGuid caster) { sPreConcentration.erase(caster); }
+    void ForgetPreBuffs(ObjectGuid g) { sPreBuffs.erase(g); sPreConcentration.erase(g); }   // (a test bot starts clean)
+
     // ------------------------------------------------------------------ concentration
     bool IsConcentrationSpell(uint32 id)
     {
@@ -1784,6 +1903,8 @@ namespace Dnd
 
     void EndConcentration(Unit* caster, std::string const& why)
     {
+        if (caster)
+            ForgetPreConcentration(caster->GetGUID());    // (a buff cast before the fight ends with it, for good)
         Encounter* e = caster ? EncounterOf(caster->GetGUID()) : nullptr;
         Combatant* me = e ? e->Find(caster->GetGUID()) : nullptr;
         if (!me || !me->concentration)
@@ -2079,11 +2200,11 @@ namespace Dnd
         if (p && id == SPELL_HEROISM)
         {
             if (Combatant* hc = CombatantOf(target->GetGUID()))
-            {
                 hc->heroismBy = p->GetGUID();
-                Narrate(p, target, Acore::StringFormat("{} fills {} with courage: temporary hit points at the start of each of their turns.",
-                    Who(p), Who(target)));
-            }
+            else
+                AddPreBuff(p, target, id);       // (before a fight: it carries into one started within the minute)
+            Narrate(p, target, Acore::StringFormat("{} fills {} with courage: temporary hit points at the start of each of their turns{}.",
+                Who(p), Who(target), CombatantOf(target->GetGUID()) ? "" : " (for a minute, into the next fight)"));
             return;
         }
         if (p && (id == SPELL_SHIELD_OF_FAITH || id == SPELL_LESSER_RESTORATION))
@@ -2095,8 +2216,11 @@ namespace Dnd
                 else
                     tc->poisoned = 0;
             }
-            Narrate(p, target, id == SPELL_SHIELD_OF_FAITH ? Acore::StringFormat("{} wraps {} in a shimmering field: +2 Armour Class.",
-                Who(p), Who(target)) : Acore::StringFormat("{} cleanses {}: no longer Poisoned.", Who(p), Who(target)));
+            else if (id == SPELL_SHIELD_OF_FAITH)
+                AddPreBuff(p, target, id);
+            Narrate(p, target, id == SPELL_SHIELD_OF_FAITH ? Acore::StringFormat("{} wraps {} in a shimmering field: +2 Armour Class{}.",
+                Who(p), Who(target), CombatantOf(target->GetGUID()) ? "" : " (for a minute, into the next fight)") :
+                Acore::StringFormat("{} cleanses {}: no longer Poisoned.", Who(p), Who(target)));
             if (Encounter* e = EncounterOf(target->GetGUID()))
                 PushOrder(*e);
             return;
@@ -2121,9 +2245,13 @@ namespace Dnd
             {
                 if (id == SPELL_BLESS)
                 {
-                    if (Combatant* oc = CombatantOf(o->GetGUID()))
+                    Combatant* oc = CombatantOf(o->GetGUID());
+                    if (oc)
                         oc->blessedBy = p->GetGUID();
-                    Narrate(p, o, Acore::StringFormat("   {} is blessed: +1d4 on attacks and saves that would fall short.", Who(o)));
+                    else
+                        AddPreBuff(p, o, id);    // (before a fight: it carries into one started within the minute)
+                    Narrate(p, o, Acore::StringFormat("   {} is blessed: +1d4 on attacks and saves that would fall short{}.", Who(o),
+                        oc ? "" : " (for a minute, into the next fight)"));
                 }
                 else
                 {
@@ -2151,14 +2279,16 @@ namespace Dnd
         }
         if (p && id == SPELL_SANCTUARY)
         {
-            if (Combatant* tc = CombatantOf(target->GetGUID()))
-            {
+            Combatant* tc = CombatantOf(target->GetGUID());
+            if (tc)
                 tc->sanctuaryBy = p->GetGUID();
-                Narrate(p, target, Acore::StringFormat("{} wards {} with |cfffff0c0Sanctuary|r: a foe that would attack them must first make a "
-                    "Wisdom save, or turn elsewhere. It ends if they attack or turn a spell on a foe.", Who(p), Who(target)));
-                if (Encounter* e = EncounterOf(target->GetGUID()))
-                    PushOrder(*e);
-            }
+            else
+                AddPreBuff(p, target, id);
+            Narrate(p, target, Acore::StringFormat("{} wards {} with |cfffff0c0Sanctuary|r: a foe that would attack them must first make a "
+                "Wisdom save, or turn elsewhere. It ends if they attack or turn a spell on a foe.{}", Who(p), Who(target),
+                tc ? "" : " (For a minute, into the next fight.)"));
+            if (Encounter* e = EncounterOf(target->GetGUID()))
+                PushOrder(*e);
             return;
         }
         if (p && id == SPELL_HASTE)
@@ -2177,6 +2307,12 @@ namespace Dnd
                     "swing in the Attack action. When it ends, a wave of lethargy costs them a turn.", Who(p), Who(target)));
                 if (Encounter* e = EncounterOf(target->GetGUID()))
                     PushOrder(*e);
+            }
+            else
+            {
+                AddPreBuff(p, target, id);       // (before a fight: it carries into one started within the minute)
+                Narrate(p, target, Acore::StringFormat("{} hastes {}: +2 Armour Class, double speed, advantage on DEX saves, and one more "
+                    "swing in the Attack action, for a minute, into the next fight.", Who(p), Who(target)));
             }
             return;
         }
@@ -2229,6 +2365,14 @@ namespace Dnd
                     "leaves them standing at 1 hit point.", Who(p), Who(target)));
                 if (Encounter* e = EncounterOf(target->GetGUID()))
                     PushOrder(*e);
+            }
+            else
+            {
+                AddPreBuff(p, target, id);       // (before a fight: it carries into one started in time)
+                Narrate(p, target, Acore::StringFormat(id == SPELL_GREATER_INVISIBILITY ? "{} turns {} |cffc0c0ffinvisible|r for a minute, "
+                    "into the next fight." : id == SPELL_STONESKIN ? "{} hardens {}'s skin to stone for a minute, into the next fight: "
+                    "bludgeoning, piercing and slashing damage halved." : "{} lays a |cfffff0c0Death Ward|r on {} for the next 8 hours: the "
+                    "first blow in a fight that would drop them leaves them standing at 1 hit point.", Who(p), Who(target)));
             }
             return;
         }
@@ -2543,11 +2687,20 @@ namespace Dnd
                 int def = std::max(AbilityMod(target, STR), AbilityMod(target, DEX));
                 Combatant* pc = CombatantOf(p->GetGUID());
                 // Poisoned: disadvantage on ability checks; Rage / Aspect of the Bear: advantage on Strength checks
-                D20Result r1 = RollD20(a, (pc && pc->poisoned ? -1 : 0) + (StrengthCheckAdvantage(p) ? 1 : 0));
-                D20Result r2 = RollD20(def, 0);
-                bool ok = r1.total > r2.total;
-                Narrate(p, target, Acore::StringFormat("{} Shoves {}: Athletics {} vs {}  {}", Who(p), Who(target), r1.text, r2.text,
-                    ok ? "|cff40ff40SUCCESS|r" : "|cffaaaaaaFAILED|r"));
+                bool ok;
+                if (target->IsPlayer() && !target->IsHostileTo(p))
+                {
+                    ok = true;                       // an ally lets you: out of harm's way, or into place, no contest
+                    Narrate(p, target, Acore::StringFormat("{} Shoves {} along - a friend, who goes with it.", Who(p), Who(target)));
+                }
+                else
+                {
+                    D20Result r1 = RollD20(a, (pc && pc->poisoned ? -1 : 0) + (StrengthCheckAdvantage(p) ? 1 : 0));
+                    D20Result r2 = RollD20(def, 0);
+                    ok = r1.total > r2.total;
+                    Narrate(p, target, Acore::StringFormat("{} Shoves {}: Athletics {} vs {}  {}", Who(p), Who(target), r1.text, r2.text,
+                        ok ? "|cff40ff40SUCCESS|r" : "|cffaaaaaaFAILED|r"));
+                }
                 if (ok)
                 {
                     float ang = p->GetAngle(target);
@@ -5324,7 +5477,8 @@ namespace Dnd
             case SPELL_SHAPE_BEAR:
             case SPELL_SHAPE_DIRE_WOLF:     return druid && lvl >= 2 && IsSubclass(p, "Moon");
             case SPELL_SHAPE_SABRETOOTH:    return druid && lvl >= 6 && IsSubclass(p, "Moon");
-            case SPELL_RANGED_ATTACK:       return !IsCaster(p);
+            case SPELL_RANGED_ATTACK:       return true;     // anyone can shoot what's in the ranged slot (a cleric's light
+                                                             // crossbow is a simple weapon; the unproficient just lack the bonus)
             case SPELL_OFFHAND_ATTACK:      return !IsCaster(p) || HasPact(p, "Blade");
             case SPELL_SECOND_WIND:         return s.cls == CLASS_FIGHTER;
             case SPELL_ACTION_SURGE:        return s.cls == CLASS_FIGHTER && lvl >= 2;
@@ -5471,6 +5625,17 @@ namespace Dnd
                               8737u, 750u, 9116u, 674u })
             if (!p->HasSpell(skill))
                 p->learnSpell(skill);
+        // ...and the skill lines themselves: equipping checks the skill, not the spell, and WoW only grants (and at every
+        // login keeps - Player::_LoadSkills deletes the rest) the ones the WoW class could have. A priest's cleric
+        // couldn't hold a sword, Tempest or not. So they're set here each time.
+        uint16 const weaponMax = p->GetMaxSkillValueForLevel();
+        for (uint16 sk : { SKILL_SWORDS, SKILL_2H_SWORDS, SKILL_AXES, SKILL_2H_AXES, SKILL_MACES, SKILL_2H_MACES, SKILL_POLEARMS,
+                           SKILL_STAVES, SKILL_DAGGERS, SKILL_FIST_WEAPONS, SKILL_BOWS, SKILL_CROSSBOWS, SKILL_GUNS, SKILL_THROWN })
+            if (!p->HasSkill(sk))
+                p->SetSkill(sk, 0, 1, weaponMax);
+        for (uint16 sk : { SKILL_LEATHER, SKILL_MAIL, SKILL_PLATE_MAIL, SKILL_SHIELD })
+            if (!p->HasSkill(sk))
+                p->SetSkill(sk, 0, 1, 1);
         auto keep = [p](uint32 id, bool has)
         {
             if (has && !p->HasSpell(id))
@@ -5988,6 +6153,8 @@ class spell_dnd_generic : public SpellScript
                             GetSpellInfo()->SpellName[0], SpellSaveDC(p), SpellAttackBonus(p)));
                 }
             // a concentration spell: the one you held ends, this one begins
+            if (IsConcentrationSpell(GetSpellInfo()->Id) && !CombatantOf(p->GetGUID()))
+                NotePreConcentration(p, GetSpellInfo()->Id);  // (outside a fight: what a buff cast before one checks)
             if (IsConcentrationSpell(GetSpellInfo()->Id))
                 if (Combatant* me = CombatantOf(p->GetGUID()))
                 {
