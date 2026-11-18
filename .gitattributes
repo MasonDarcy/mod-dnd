@@ -1,0 +1,2 @@
+# Line endings: every text file is stored and checked out with LF (Windows editors and Python's write_text make CRLF here).
+* text=auto eol=lf
